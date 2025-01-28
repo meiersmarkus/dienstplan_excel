@@ -13,6 +13,8 @@ Dieses Projekt automatisiert den Prozess des Herunterladens und Aktualisierens v
 
 - Python 3.x
 - Erforderliche Python-Pakete (mit `pip install -r requirements.txt` installieren)
+- Eine config.json mit den notwendigen Login-Daten
+- Eine colleagues.json, sofern DienstplanStart.py genutzt wird, um mehrere Kalender zu aktualisieren
 
 ## Verwendung
 
@@ -47,3 +49,33 @@ Das Skript protokolliert seine Ausgabe sowohl in eine Protokolldatei (`Dienstpla
 ## Timer-Funktionalität
 
 Das Skript enthält eine Timer-Funktionalität, um die für verschiedene Aufgaben benötigte Zeit zu messen. Die Gesamtdauer wird am Ende der Skriptausführung protokolliert.
+
+## Aufbau der json Dateien
+
+config.json
+```sh
+{
+  "username_login_ard": "mailadresse",
+  "password_login_ard": "passwort",
+  "mailpassword": "mailpasswort",
+  "ardbox": "####",
+  "downloadordner": "####",
+  "kalenderbase": "####",
+  "abobase": "####",
+  "caldavard": "####",
+  "notifymail": "mailadresse",
+  "user1": "Beispielnutzer",
+  "user2": "Beispielnutzer2"
+}
+```
+
+colleagues.json
+```sh
+{
+    "colleagues": [
+        ["user_name", ["-o", "-n"]],
+        ["user_name2", ["-o"]],
+        ["user_name3", []]
+    ]
+}
+```
