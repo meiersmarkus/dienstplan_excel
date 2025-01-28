@@ -1,0 +1,8 @@
+pandas
+beautifulsoup4
+caldav
+pytz
+holidays
+python-dateutil
+requests
+logging
