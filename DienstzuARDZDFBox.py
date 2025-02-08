@@ -687,10 +687,10 @@ try:
         print(f"[ERROR] Kalender nicht gefunden: {e}")
         if not nas:
             # print(f"[ERROR] Dienstplan-Kalender nicht gefunden. Versuche, einen neuen Kalender zu erstellen...")
-            new_calendar = principal.make_calendar(calendar_name)
-            new_calendar.save()  # Save the newly created calendar to the server
-            print(f"[DEBUG] Kalender '{calendar_name}' erfolgreich erstellt.")
-            calendar = new_calendar
+            # new_calendar = principal.make_calendar(calendar_name)
+            # new_calendar.save()  # Save the newly created calendar to the server
+            print(f"[DEBUG] Kalender '{calendar_name}' nicht gefunden.")
+            # calendar = new_calendar
 
     # Erfolgreiche Verbindung herstellen, falls Kalender gefunden oder erstellt wurde
     if not calendar:
