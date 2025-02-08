@@ -87,8 +87,8 @@ def update_calendar(name, args):
         )
         if result.stdout:
             output_lines = result.stdout.decode().splitlines()
-            if len(output_lines) <= 2:
-                logger.debug(f"[INFO] {name} aktualisiert.")
+#            if len(output_lines) <= 2:
+#                logger.debug(f"[INFO] {name} aktualisiert.")
             if len(output_lines) > 2:
                 logger.debug("\n".join(output_lines))
         if result.stderr:
