@@ -299,11 +299,12 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
         is_holiday_flag, holiday_name = is_holiday_or_weekend(start_date.date())
         workplace_info = laufzettel_we if is_holiday_flag else laufzettel_werktags
         try:
-            # print(f"[DEBUG] {start_date.strftime('%d.%m.%Y')} ist ein Feiertag oder Wochenende: {holiday_name}")
+            cleaned_service_entry = re.sub(r'\s*\(WT\)|\s*Info ', '', service_entry[time_match.end():].strip())
             for info in workplace_info:
-                # Titel ohne (WT) finden
-                if re.sub(r'\s*\(WT\)', '', service_entry[time_match.end():].strip()) in \
-                        info['dienstname'].strip():
+                # Titel ohne (WT) und "Info" finden
+                # print(f"[DEBUG] {service_entry[time_match.end():].strip()} -> {cleaned_service_entry}")
+                if cleaned_service_entry in info['dienstname'].strip():
+                    # print(f"[DEBUG] {info['dienstname']} gefunden.")
                     # DIENSTZEIT ist im HHMM-HHMM Format
                     html_time_match = re.match(
                         r'(\d{4})\s*-\s*(\d{4})', info['dienstzeit']
@@ -316,7 +317,9 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
                             workplace = info.get('arbeitsplatz', None)
                             break_time = info.get('pausenzeit', None)
                             task = info.get('task', None)
+                            # print(f"[DEBUG] {cleaned_service_entry}, {workplace}")
                             break
+            # print(f"[DEBUG] Workplace: {workplace}, Break: {break_time}, Task: {task}")
 
             if user_name == load_credentials("user1", config_path):
                 full_title = f"{start_time_str}-{end_time_str} {title}"
