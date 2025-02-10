@@ -11,7 +11,7 @@ import json
 
 # Logging-Konfiguration
 log_formatter = logging.Formatter('%(message)s')
-log_file = "Dienstplanscript.log"
+log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Dienstplanscript.log")
 log_handler = RotatingFileHandler(log_file, maxBytes=1024 * 1024, backupCount=3)
 log_handler.setFormatter(log_formatter)
 log_handler.setLevel(logging.DEBUG)
@@ -187,19 +187,19 @@ def main():
     script_path = os.path.abspath(__file__)
     folder_path = os.path.dirname(script_path)
     if delete:
-        logger.info("[DEBUG] Lösche alte Einträge...")
+        logger.debug("[DEBUG] Lösche alte Einträge...")
         deleteoldentries()
         return
     original_latest_date = get_latest_modification_date(folder_path)
     if nodownload:
-        logger.info("[DEBUG] Direkter Start ohne Download...")
+        logger.debug("[DEBUG] Direkter Start ohne Download...")
         update_calendars()
         return
     if run_download_script() == 0 or force:
-        logger.info("[DEBUG] Download erfolgreich, Kalender werden aktualisiert.")
+        logger.debug("[DEBUG] Download erfolgreich, Kalender werden aktualisiert.")
         update_calendars()
     else:
-        logger.info("[DEBUG] Keine Änderungen festgestellt.")
+        logger.debug("[DEBUG] Keine Änderungen festgestellt.")
 
 
 if __name__ == "__main__":
