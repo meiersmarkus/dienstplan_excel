@@ -49,10 +49,11 @@ def end_timer(timer_name, task_description):
 
 # Überprüfung und Installation fehlender Pakete
 parser = argparse.ArgumentParser(description="Dienst zu ARD ZDF Box Script.")
-parser.add_argument("-f", "--force", help="Herunterladen", action="store_true")
+parser.add_argument("-f", "--force", help="Erzwingen", action="store_true")
+parser.add_argument("-n", "--nodownload", help="Kein Dienstpläne hHerunterladen, direkt starten", action="store_true")
 args = parser.parse_args()
 force = args.force
-
+nodownload = args.nodownload
 
 def run_download_script():
     """Führt das Download-Skript aus und gibt den Rückgabewert zurück."""
@@ -144,6 +145,10 @@ def main():
     script_path = os.path.abspath(__file__)
     folder_path = os.path.dirname(script_path)
     original_latest_date = get_latest_modification_date(folder_path)
+    if nodownload:
+        logger.info("[DEBUG] Direkter Start ohne Download.")
+        update_calendars()
+        return
     if run_download_script() == 0 or force:
         logger.info("[DEBUG] Download erfolgreich, Kalender werden aktualisiert.")
         update_calendars()
