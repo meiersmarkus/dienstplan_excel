@@ -80,8 +80,8 @@ caldav_start = load_credentials(caldavlogin, config_path)
 
 calendar_name = 'Dienstplan ' + name.replace(',', '').replace('.', '')
 caldav_url = caldav_start + 'dienstplan-' + name.lower().replace(' ', '-').replace(',', '').replace('.', '') + '/'
-print(f"[DEBUG] Kalendername: {calendar_name}")
-print(f"[DEBUG] Kalender-URL: {caldav_url}")
+# print(f"[DEBUG] Kalendername: {calendar_name}")
+# print(f"[DEBUG] Kalender-URL: {caldav_url}")
 
 try:
     # print(f"[DEBUG] Verbinde mit CalDAV-Server '{service_name}'...")
@@ -92,7 +92,7 @@ try:
     principal = client.principal()
     try:
         calendar = principal.calendar(name=calendar_name)
-        print(f"[DEBUG] Kalender {calendar} gefunden.")
+        # print(f"[DEBUG] Kalender {calendar} gefunden.")
     except Exception as e:
         print(f"[ERROR] Kalender nicht gefunden: {e}")
 
