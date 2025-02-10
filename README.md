@@ -30,10 +30,10 @@ Dieses Projekt automatisiert den Prozess des Herunterladens und Aktualisierens v
 
 ### Beispiel
 
-Um das Skript mit der Option zum Erzwingen des Downloads auszuführen:
+Optionen zum Erzwingen des Updates (-f) oder ohne Download (-n) auszuführen:
 
 ```sh
-python DienstplanStart.py -f
+python DienstplanStart.py -f -n
 ```
 
 Um das Skript mit dem Benutzernamen und weiteren Optionen auszuführen:
