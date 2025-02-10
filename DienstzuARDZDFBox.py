@@ -267,7 +267,7 @@ def process_all_day_event(service_entry, start_date):  # Funktion zur Verarbeitu
 
 
 # Funktion zur Verarbeitung eines zeitgebundenen Events
-def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzettel_we, countnightshifts):
+def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzettel_we, countnightshifts, nonightshifts):
     # Extract start and end time from Excel entry
     time_match = re.match(r'(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})', service_entry)
     if time_match:
@@ -326,7 +326,7 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
             else:
                 full_title = f"{title}, {workplace}" if workplace and workplace not in title else title
 
-            if start_datetime.time() >= datetime.time(20, 0):  # Dienste mit Startzeit nach 20:00 Uhr
+            if start_datetime.time() >= datetime.time(20, 0) and nonightshifts == False:  # Dienste mit Startzeit nach 20:00 Uhr
                 # Prüfen, ob die Nachtschichtzählung neu gestartet werden soll
                 if not countnightshifts or start_date.month in [1, 2, 3, 4]:
                     # print(f"[DEBUG] Starte neue Zählung: Monat={start_date.month}, Datum={start_date}")
@@ -467,6 +467,23 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
                     print(f"[ERROR] Fehler beim Löschen der Termine für {date}: {e}")
             return
     # print(f"[DEBUG] '{user_name}'")
+    # Prüfe, ob Termine im Januar des aktuellen Jahres eingetragen sind
+    nonightshifts = True
+    year = identifier_row[1].year
+    start_of_january = datetime.datetime(year, 1, 1, 0, 0, tzinfo=tz_berlin)
+    end_of_january = datetime.datetime(year, 1, 31, 23, 59, tzinfo=tz_berlin)
+
+    try:
+        termine = calendar.date_search(start=start_of_january, end=end_of_january)
+        if len(termine) == 0:
+            nonightshifts = True
+        else:
+            nonightshifts = False
+            # print(f"[DEBUG] {user_name} hat bereits Termine im Januar {year} eingetragen.")
+    except Exception as e:
+        print(f"[ERROR] Fehler beim Durchsuchen des Kalenders: {e}")
+        nonightshifts = True
+
     for day in range(1, 8):  # Spalten B bis H (1 bis 7)
         date = identifier_row[day]
         service_entry = user_row[day]
@@ -503,7 +520,7 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
             process_timed_event(
                 service_entry, start_date,
                 laufzettel_werktags, laufzettel_we,
-                countnightshifts
+                countnightshifts, nonightshifts
             )
         else:
             process_all_day_event(service_entry, start_date)

@@ -5,6 +5,43 @@ import os
 from datetime import datetime, timedelta
 from caldav.elements import dav, cdav
 from caldav import DAVClient
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import logging
+from logging.handlers import RotatingFileHandler
+
+# Logging-Konfiguration
+log_formatter = logging.Formatter('%(message)s')
+log_file = "Dienstplanscript2.log"
+log_handler = RotatingFileHandler(log_file, maxBytes=1024 * 1024, backupCount=3)
+log_handler.setFormatter(log_formatter)
+log_handler.setLevel(logging.DEBUG)
+
+# Logger einrichten
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
+logger.addHandler(log_handler)
+
+# Ausgabe auf Konsole
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(log_formatter)
+console_handler.setLevel(logging.DEBUG)
+logger.addHandler(console_handler)
+
+# Set logging level for caldav and urllib3 libraries to WARNING
+logging.getLogger('caldav').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+
+
+def load_colleagues_from_config(config_path):
+    """Lädt die Kollegen aus einer Konfigurationsdatei."""
+    try:
+        with open(config_path, 'r') as config_file:
+            config = json.load(config_file)
+            return config.get("colleagues", [])
+    except Exception as e:
+        logger.error(f"Fehler beim Laden der Konfigurationsdatei: {e}")
+        return []
+
 
 def load_credentials(service_name, config_path):
     # Laden der JSON-Datei
@@ -31,63 +68,62 @@ def load_credentials(service_name, config_path):
             raise ValueError(f"Benutzername oder Passwort für '{service_name}' nicht gefunden.")
 
 
-def delete_events(username, year):
+def delete_events(name, year):
     start_date = datetime(year, 1, 1)
     end_date = datetime(year, 12, 31, 23, 59, 59)
+    logger.info(f"Suche nach Terminen für {name} im Jahr {year}...")
     events = calendar.date_search(start=start_date, end=end_date)
     
     if not events:
-        print(f"Keine Termine für das Jahr {year} gefunden.")
-        return
+        logger.info(f"Keine Termine für {name} im Jahr {year} gefunden.")
+        sys.exit(0)
     
-    print(f"Termine im Jahr {year} werden aus '{calendar_name}' gelöscht...")
+    logger.debug(f"Termine im Jahr {year} werden aus '{calendar_name}' gelöscht...")
     for event in events:
         vevent = event.icalendar_instance
         for component in vevent.walk('VEVENT'):
             summary = component.get('SUMMARY', 'Ohne Titel')
             dtstart = component.get('DTSTART')
             dtstart = dtstart.dt if dtstart else "Unbekanntes Datum"
-            #print(f"{dtstart}: {summary}")
     
     deleted_count = sum(1 for event in events if not event.delete())
-    print(f"{deleted_count} Termine wurden gelöscht.")
+    logger.info(f"{deleted_count} Termine wurden gelöscht.")
+
 
 # Main
 script_path = os.path.abspath(__file__)
 folder_path = os.path.dirname(script_path)
-# print(f"[DEBUG] folder_path: {folder_path}")
+# logger.debug(f"[DEBUG] folder_path: {folder_path}")
 config_path = os.path.join(folder_path, 'config.json')
-user_name = sys.argv[1]
-if not sys.argv[2].isdigit():
-    print("Fehler: Jahr muss eine Zahl sein.")
-    sys.exit(1)
-year = int(sys.argv[2])
+
+name = sys.argv[1]
+year = datetime.now().year - 2
 
 service_name = "ard"
 caldavlogin = "caldav" + service_name
 caldav_start = load_credentials(caldavlogin, config_path)
-calendar_name = 'Dienstplan ' + user_name.replace(',', '').replace('.', '')
-caldav_url = caldav_start + 'dienstplan-' + user_name.lower().replace(' ', '-').replace(',', '').replace('.', '') + '/'
 
-print(f"[DEBUG] Kalendername: {calendar_name}")
-print(f"[DEBUG] Kalender-URL: {caldav_url}")
+calendar_name = 'Dienstplan ' + name.replace(',', '').replace('.', '')
+caldav_url = caldav_start + 'dienstplan-' + name.lower().replace(' ', '-').replace(',', '').replace('.', '') + '/'
+logger.debug(f"[DEBUG] Kalendername: {calendar_name}")
+logger.debug(f"[DEBUG] Kalender-URL: {caldav_url}")
 
 try:
-    # print(f"[DEBUG] Verbinde mit CalDAV-Server '{service_name}'...")
-    login_service = "login_" + service_name
+    # logger.debug(f"[DEBUG] Verbinde mit CalDAV-Server '{service_name}'...")
+    login_service = "login_ard"
     username, password = load_credentials(login_service, config_path)
-    # print(f"[DEBUG] Username und Passwort geladen: {username}")
+    # logger.debug(f"[DEBUG] Username und Passwort geladen: {username}")
     client = DAVClient(caldav_start, username=username, password=password)
     principal = client.principal()
     try:
         calendar = principal.calendar(name=calendar_name)
-        print(f"[DEBUG] Kalender {calendar} gefunden.")
+        logger.debug(f"[DEBUG] Kalender {calendar} gefunden.")
     except Exception as e:
-        print(f"[ERROR] Kalender nicht gefunden: {e}")
+        logger.error(f"[ERROR] Kalender nicht gefunden: {e}")
 
 except Exception as e:
-    print(f"[ERROR] CalDAV-Verbindung fehlgeschlagen oder Fehler bei der Kalendererstellung: {e}")
+    logger.error(f"[ERROR] CalDAV-Verbindung fehlgeschlagen oder Fehler bei der Kalendererstellung: {e}")
     sys.exit(1)
 
-
-delete_events(user_name, year)
+if not name == "Meier":
+    delete_events(name, year)

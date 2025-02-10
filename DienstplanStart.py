@@ -51,9 +51,11 @@ def end_timer(timer_name, task_description):
 parser = argparse.ArgumentParser(description="Dienst zu ARD ZDF Box Script.")
 parser.add_argument("-f", "--force", help="Erzwingen", action="store_true")
 parser.add_argument("-n", "--nodownload", help="Kein Dienstpläne hHerunterladen, direkt starten", action="store_true")
+parser.add_argument("-d", "--delete", help="Alte Termine löschen", action="store_true")
 args = parser.parse_args()
 force = args.force
 nodownload = args.nodownload
+delete = args.delete
 
 def run_download_script():
     """Führt das Download-Skript aus und gibt den Rückgabewert zurück."""
@@ -141,12 +143,56 @@ def get_latest_modification_date(folder_path):
     return datetime.fromtimestamp(latest_mod_time) if latest_mod_time > 0 else None
 
 
+def deleteoldentries():
+    """Löscht alte Einträge für alle Kollegen."""
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'colleagues.json')
+    colleagues = load_colleagues_from_config(config_path)
+
+    with ThreadPoolExecutor() as executor:
+        futures = [executor.submit(delete_events, name, args) for name, args in colleagues]
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception as e:
+                logger.error(f"Fehler bei der Kalenderaktualisierung: {e}")
+
+
+def delete_events(name, args):
+    """Löscht alte Enträge für einen einzelnen Kollegen."""
+    try:
+        result = subprocess.run(
+            ["python", "/volume1/CloudSync/ARD-ZDF-Box/ADienstplanCaldav/Diensteloeschen.py", name] + args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=300  # Timeout von 5 Minuten
+        )
+        if result.stdout:
+            output_lines = result.stdout.decode().splitlines()
+#            if len(output_lines) <= 2:
+#                logger.debug(f"[INFO] {name} aktualisiert.")
+            if len(output_lines) > 2:
+                logger.debug("\n".join(output_lines))
+        if result.stderr:
+            logger.debug(result.stderr.decode().rstrip())
+        return result.returncode
+    except subprocess.TimeoutExpired:
+        logger.error(f"Kalenderaktualisierung für {name} hat das Zeitlimit überschritten.")
+        return -1
+    except Exception as e:
+        logger.error(f"Fehler bei der Aktualisierung des Kalenders für {name}: {e}")
+        return -1
+
+
 def main():
     script_path = os.path.abspath(__file__)
     folder_path = os.path.dirname(script_path)
+    if delete:
+        logger.info("[DEBUG] Lösche alte Einträge...")
+        deleteoldentries()
+        return
     original_latest_date = get_latest_modification_date(folder_path)
     if nodownload:
-        logger.info("[DEBUG] Direkter Start ohne Download.")
+        logger.info("[DEBUG] Direkter Start ohne Download...")
         update_calendars()
         return
     if run_download_script() == 0 or force:
