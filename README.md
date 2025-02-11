@@ -18,7 +18,7 @@ Dieses Projekt automatisiert den Prozess des Herunterladens und Aktualisierens v
 
 ## Verwendung
 
-### Befehlszeilenoptionen
+### Befehlszeilenoptionen für DienstzuARDZDFBOX.py
 
 - `user_name`: Name des Benutzers (erforderlich)
 - `-c`, `--calendar`: Dienste in MeiersMarkus eintragen.
