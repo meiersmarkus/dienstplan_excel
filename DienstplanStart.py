@@ -147,9 +147,19 @@ def deleteoldentries():
     """Löscht alte Einträge für alle Kollegen."""
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'colleagues.json')
     colleagues = load_colleagues_from_config(config_path)
+    whitelist_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'deletewhitelist.json')
+    whitelist = load_colleagues_from_config(whitelist_path)
+
+    # Erstellen einer Liste der Namen in der Whitelist
+    whitelist_names = [colleague[0] for colleague in whitelist]
+    # Filtern der Kollegen, die nicht in der Whitelist sind
+    filtered_colleagues = [colleague for colleague in colleagues if colleague[0] not in whitelist_names]
+    # print("Ursprüngliche Kollegen:", colleagues)
+    # print("Whitelist:", whitelist_names)
+    # print("Gefilterte Kollegen:", filtered_colleagues)
 
     with ThreadPoolExecutor() as executor:
-        futures = [executor.submit(delete_events, name, args) for name, args in colleagues]
+        futures = [executor.submit(delete_events, name, args) for name, args in filtered_colleagues]
         for future in as_completed(futures):
             try:
                 future.result()
