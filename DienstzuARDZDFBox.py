@@ -511,6 +511,7 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
 
         start_date = pd.to_datetime(date)
         if start_date.date() >= laufzettel_datum.date() and not changedlaufzettel:
+            print(f"[DEBUG] Verwende den aktuellen Laufzettel für {start_date.strftime('%d.%m.%Y')}, da laufzettel_datum={laufzettel_datum.date()}.")
             html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Laufzettel_' + laufzettel_datum.strftime('%Y%m%d') + '.html')
             laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info(html_file_path)
             changedlaufzettel = True
