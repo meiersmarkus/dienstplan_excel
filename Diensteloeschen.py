@@ -100,5 +100,5 @@ except Exception as e:
     print(f"[ERROR] CalDAV-Verbindung fehlgeschlagen oder Fehler bei der Kalendererstellung: {e}")
     sys.exit(1)
 
-if not name == "Meier":
+if not name == "Meier" or not name == "Burmeister":
     delete_events(name, year)
