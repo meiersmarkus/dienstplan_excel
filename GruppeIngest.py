@@ -7,19 +7,14 @@ import pandas as pd
 import datetime
 import locale
 import re
-from bs4 import BeautifulSoup
 from caldav import DAVClient
 from datetime import date, timedelta
 import datetime as dt
 import pytz
-import holidays
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from dateutil.easter import easter
 from itertools import chain
 import logging
 from logging.handlers import RotatingFileHandler
+import signal
 
 # Logging-Konfiguration
 log_formatter = logging.Formatter('%(message)s')
@@ -27,6 +22,15 @@ log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Dienstplans
 log_handler = RotatingFileHandler(log_file, maxBytes=1024 * 1024, backupCount=3)
 log_handler.setFormatter(log_formatter)
 log_handler.setLevel(logging.DEBUG)
+
+# Custom filter to exclude specific messages
+class ExcludeCaldavFilter(logging.Filter):
+    def filter(self, record):
+        # Exclude messages containing "GET" or "HTTP/1.1"
+        return not any(keyword in record.getMessage() for keyword in ["HTTP/11", "DEPRECATION NOTICE", "share.ard-zdf-box.de"])
+
+# Add the filter to the log handler
+log_handler.addFilter(ExcludeCaldavFilter())
 
 # Logger einrichten
 logger = logging.getLogger()
@@ -37,6 +41,7 @@ logger.addHandler(log_handler)
 console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setFormatter(log_formatter)
 console_handler.setLevel(logging.DEBUG)
+console_handler.addFilter(ExcludeCaldavFilter())  # Add the same filter to console output
 logger.addHandler(console_handler)
 
 # Initialisiere Timer
@@ -57,7 +62,7 @@ def end_timer(timer_name, task_description):
         elapsed_time = end_time - timers[timer_name]
         # if timer_name == "gesamt":
         #    logger.debug(f"[TIME] {task_description}: {elapsed_time:.2f} Sekunden", end="")
-        if not (timer_name in ("caldav", "initial", "gesamt") and elapsed_time <= 20):
+        if not (timer_name in ("caldav", "initial", "gesamt") and elapsed_time <= 10):
             logger.debug(f"[TIME] {task_description}: {elapsed_time:.2f} Sekunden")
         del timers[timer_name]  # Timer entfernen, wenn er fertig ist
     else:
@@ -173,8 +178,8 @@ def process_timed_event(service_entry, start_date, name, schichten):
         # logger.debug(f"[DEBUG] Excel: '{full_title.strip()}' am '{start_datetime.date()}'.")
         # Now check if the event with the full title already exists
         existing_events = calendar.date_search(
-            start_datetime.replace(hour=0, minute=0, second=0),
-            end_datetime.replace(hour=23, minute=59, second=59)
+            start=start_datetime.replace(hour=0, minute=0, second=0),
+            end=end_datetime.replace(hour=23, minute=59, second=59)
         )
         event_exists = False
 
@@ -238,59 +243,74 @@ def process_timed_event(service_entry, start_date, name, schichten):
 
 
 def process_excel_file(file_path, heute, colleagues, schichten):
-    df = pd.read_excel(file_path, header=None, engine='openpyxl')
-    # logger.debug(f"[DEBUG] Verfügbare Namen: {df[0].unique()}")
-    identifier_row = df[df[0].str.contains("I", na=False)].iloc[0]
-    # Versuch, den Namen flexibler zu finden
-    for name in colleagues:
-        # logger.debug(f"[DEBUG] Suche nach '{name}' in der Excel-Datei...")
-        if isinstance(name, list):  # Ensure name is a string
-            name = name[0]
-        try:
-            user_row = df[
-                df[0].str.strip().str.casefold().str.replace(re.compile(r'\s*[\r\n]*\(.*\)\s*[\r\n]*'), '', regex=True) == name.strip().casefold()
-            ].iloc[0]
-        except IndexError:
-            user_name_cleaned = re.sub(r',\s*[A-Z]\.?$', '', name).strip()
+    # Define a timeout handler
+    def timeout_handler(signum, frame):
+        raise TimeoutError("The script execution timed out.")
+
+    # Set the timeout duration (e.g., 300 seconds = 5 minutes)
+    TIMEOUT_DURATION = 300
+
+    # Register the timeout handler
+    signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(TIMEOUT_DURATION)  # Start the timer
+
+    try:
+        df = pd.read_excel(file_path, header=None, engine='openpyxl')
+        # logger.debug(f"[DEBUG] Verfügbare Namen: {df[0].unique()}")
+        identifier_row = df[df[0].str.contains("I", na=False)].iloc[0]
+        # Versuch, den Namen flexibler zu finden
+        for name in colleagues:
+            # logger.debug(f"[DEBUG] Suche nach '{name}' in der Excel-Datei...")
+            if isinstance(name, list):  # Ensure name is a string
+                name = name[0]
             try:
                 user_row = df[
-                    df[0].str.strip().str.casefold().str.replace(r'\s*[\r\n]*\(.*\)\s*[\r\n]*', '') == user_name_cleaned.casefold()
+                    df[0].str.strip().str.casefold().str.replace(re.compile(r'\s*[\r\n]*\(.*\)\s*[\r\n]*'), '', regex=True) == name.strip().casefold()
                 ].iloc[0]
             except IndexError:
-                logger.error(f"[ERROR] '{user_name_cleaned}' nicht gefunden.")
-                continue
-        for day in range(1, 8):  # Spalten B bis H (1 bis 7)
-            date = identifier_row[day]
-            service_entry = user_row[day]
+                user_name_cleaned = re.sub(r',\s*[A-Z]\.?$', '', name).strip()
+                try:
+                    user_row = df[
+                        df[0].str.strip().str.casefold().str.replace(r'\s*[\r\n]*\(.*\)\s*[\r\n]*', '') == user_name_cleaned.casefold()
+                    ].iloc[0]
+                except IndexError:
+                    logger.error(f"[ERROR] '{user_name_cleaned}' nicht gefunden.")
+                    continue
+            for day in range(1, 8):  # Spalten B bis H (1 bis 7)
+                date = identifier_row[day]
+                service_entry = user_row[day]
 
-            # Überprüfung, ob die Zelle leer oder NaN ist
-            if pd.isna(service_entry) or not isinstance(service_entry, str):
-                service_entry = "FT"
-            else:
-                service_entry = service_entry.replace('\n', ' ') \
-                                            .replace('\r', ' ') \
-                                            .replace('    ', ' ') \
-                                            .replace('   ', ' ') \
-                                            .replace('  ', ' ')
-                service_entry = re.sub(
-                    r'(\b\d{2})\.(\d{2}\b)',
-                    r'\1:\2',
-                    service_entry
-                )  # Ersetze Punkte im Zeitformat "HH.MM" durch Doppelpunkte "HH:MM"
-                service_entry = re.sub(
-                    r'(\b\d{2}:\d{2})\s*-\s*(\d{2}:\d{2}\b)',
-                    r'\1 - \2',
-                    service_entry
-                )  # Vereinheitliche das Zeitformat auf "HH:MM - HH:MM" (mit oder ohne Leerzeichen um den Bindestrich)
-            # logger.info(f"[INFO] {identifier_row[day].strftime('%a, %d.%m.%Y')}, {service_entry}")
+                # Überprüfung, ob die Zelle leer oder NaN ist
+                if pd.isna(service_entry) or not isinstance(service_entry, str):
+                    service_entry = "FT"
+                else:
+                    service_entry = service_entry.replace('\n', ' ') \
+                                                .replace('\r', ' ') \
+                                                .replace('    ', ' ') \
+                                                .replace('   ', ' ') \
+                                                .replace('  ', ' ')
+                    service_entry = re.sub(
+                        r'(\b\d{2})\.(\d{2}\b)',
+                        r'\1:\2',
+                        service_entry
+                    )  # Ersetze Punkte im Zeitformat "HH.MM" durch Doppelpunkte "HH:MM"
+                    service_entry = re.sub(
+                        r'(\b\d{2}:\d{2})\s*-\s*(\d{2}:\d{2}\b)',
+                        r'\1 - \2',
+                        service_entry
+                    )  # Vereinheitliche das Zeitformat auf "HH:MM - HH:MM" (mit oder ohne Leerzeichen um den Bindestrich)
+                # logger.info(f"[INFO] {identifier_row[day].strftime('%a, %d.%m.%Y')}, {service_entry}")
 
-            start_date = pd.to_datetime(date)
-            if start_date.date() < heute - timedelta(days=1) or start_date.date() > heute + timedelta(days=1):
-                # logger.debug(f"[DEBUG] {start_date.strftime('%a, %d.%m.%Y')} ist außerhalb des Zeitrahmens.")
-                continue
-            if re.search(r'\b\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\b', service_entry):
-                # logger.debug(f"[DEBUG] '{service_entry}' ist ein zeitgebundenes Event.")
-                process_timed_event(service_entry, start_date, name, schichten)
+                start_date = pd.to_datetime(date)
+                if start_date.date() < heute - timedelta(days=1) or start_date.date() > heute + timedelta(days=1):
+                    # logger.debug(f"[DEBUG] {start_date.strftime('%a, %d.%m.%Y')} ist außerhalb des Zeitrahmens.")
+                    continue
+                if re.search(r'\b\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\b', service_entry):
+                    # logger.debug(f"[DEBUG] '{service_entry}' ist ein zeitgebundenes Event.")
+                    process_timed_event(service_entry, start_date, name, schichten)
+    finally:
+        # Cancel the alarm if the script finishes before the timeout
+        signal.alarm(0)
 
 
 def extract_date(entry):
@@ -342,6 +362,7 @@ def extract_date_from_filename(filename):
         return None  # Falls das Datum nicht gefunden wird
 
 # Main
+logger.debug(f"[INFO] Starte Gruppenkalenderaktualisierung Ingest...")
 locale.setlocale(locale.LC_TIME, 'de_DE.UTF-8')
 tz_berlin = pytz.timezone('Europe/Berlin')
 script_path = os.path.abspath(__file__)
@@ -399,7 +420,7 @@ heute = date.today()
 
 # Lösche alle Termine, die ein früheres Datum haben als gestern
 start_date = heute - timedelta(days=7)
-end_date = heute - timedelta(days=2)
+end_date = heute - timedelta(days=1)
 events = calendar.date_search(start=start_date, end=end_date)
 for event in events:
     vevent = event.icalendar_instance
@@ -408,7 +429,7 @@ for event in events:
         dtstart = component.get('DTSTART')
         dtstart = dtstart.dt if dtstart else "Unbekanntes Datum"
 deleted_count = sum(1 for event in events if not event.delete())
-logger.debug(f"{deleted_count} Termine wurden gelöscht.")
+logger.debug(f"[DEBUG] {deleted_count} alte Termine wurden gelöscht.")
 
 
 with_date, without_date = [], []

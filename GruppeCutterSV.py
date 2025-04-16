@@ -7,19 +7,14 @@ import pandas as pd
 import datetime
 import locale
 import re
-from bs4 import BeautifulSoup
 from caldav import DAVClient
 from datetime import date, timedelta
 import datetime as dt
 import pytz
-import holidays
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from dateutil.easter import easter
 from itertools import chain
 import logging
 from logging.handlers import RotatingFileHandler
+import signal
 
 # Logging-Konfiguration
 log_formatter = logging.Formatter('%(message)s')
@@ -27,6 +22,15 @@ log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Dienstplans
 log_handler = RotatingFileHandler(log_file, maxBytes=1024 * 1024, backupCount=3)
 log_handler.setFormatter(log_formatter)
 log_handler.setLevel(logging.DEBUG)
+
+# Custom filter to exclude specific messages
+class ExcludeCaldavFilter(logging.Filter):
+    def filter(self, record):
+        # Exclude messages containing "GET" or "HTTP/1.1"
+        return not any(keyword in record.getMessage() for keyword in ["HTTP/11", "DEPRECATION NOTICE", "share.ard-zdf-box.de"])
+
+# Add the filter to the log handler
+log_handler.addFilter(ExcludeCaldavFilter())
 
 # Logger einrichten
 logger = logging.getLogger()
@@ -37,6 +41,7 @@ logger.addHandler(log_handler)
 console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setFormatter(log_formatter)
 console_handler.setLevel(logging.DEBUG)
+console_handler.addFilter(ExcludeCaldavFilter())  # Add the same filter to console output
 logger.addHandler(console_handler)
 
 # Initialisiere Timer
@@ -57,11 +62,11 @@ def end_timer(timer_name, task_description):
         elapsed_time = end_time - timers[timer_name]
         # if timer_name == "gesamt":
         #    logger.debug(f"[TIME] {task_description}: {elapsed_time:.2f} Sekunden", end="")
-        if not (timer_name in ("caldav", "initial", "gesamt") and elapsed_time <= 20):
+        if not (timer_name in ("caldav", "initial", "gesamt") and elapsed_time <= 10):
             logger.debug(f"[TIME] {task_description}: {elapsed_time:.2f} Sekunden")
         del timers[timer_name]  # Timer entfernen, wenn er fertig ist
     else:
-        logger.error(f"[ERROR] Kein aktiver Timer mit dem Namen: {timer_name}")
+        logger.error(f"Kein aktiver Timer mit dem Namen: {timer_name}")
 
 def load_from_config(config_path, key):
     try:
@@ -139,98 +144,112 @@ END:VCALENDAR
 
 # Funktion zur Verarbeitung eines zeitgebundenen Events
 def process_timed_event(service_entry, date, name_without_brackets):
-    # Extract start and end time from Excel entry
-    time_match = re.match(r'(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})', service_entry)
-    # logger.debug(f"[DEBUG] '{service_entry}' ist ein zeitgebundenes Event.")
-    if time_match:
-        start_time_str = time_match.group(1)
-        end_time_str = time_match.group(2)
+    # Define a timeout handler
+    def timeout_handler(signum, frame):
+        raise TimeoutError("The script execution timed out.")
 
-        start_datetime = datetime.datetime.strptime(f"{date.strftime('%Y-%m-%d')} {start_time_str}", '%Y-%m-%d %H:%M')
-        end_datetime = datetime.datetime.strptime(f"{date.strftime('%Y-%m-%d')} {end_time_str}", '%Y-%m-%d %H:%M')
+    # Set the timeout duration (e.g., 300 seconds = 5 minutes)
+    TIMEOUT_DURATION = 300
 
-        if start_datetime.tzinfo is None:
-            start_datetime = tz_berlin.localize(start_datetime)
-        if end_datetime.tzinfo is None:
-            end_datetime = tz_berlin.localize(end_datetime)
-        if end_datetime < start_datetime:
-            end_datetime += datetime.timedelta(days=1)
+    # Register the timeout handler
+    signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(TIMEOUT_DURATION)  # Start the timer
 
-        # Get the basic title from the Excel entry (e.g., "Schnitt 2")
-        title = service_entry[time_match.end():].strip()
-        # Entferne "Info " und "(WT) " von dem Titel
-        title = re.sub(r'\s*\(WT\)|\s*Info ', '', title)
-        # logger.debug(f"[DEBUG] '{title}' ist der Titel des Events.")
-        # logger.debug(f"[DEBUG] Excel event: {title}, start: {start_time_str}, end: {end_time_str}")
-        # logger.debug(f"[DEBUG] Excel event: {cleaned_service_entry}")
-        full_title = f"{name_without_brackets}, {service_entry[time_match.end():].strip()}"
+    try:
+        # Extract start and end time from Excel entry
+        time_match = re.match(r'(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})', service_entry)
+        # logger.debug(f"[DEBUG] '{service_entry}' ist ein zeitgebundenes Event.")
+        if time_match:
+            start_time_str = time_match.group(1)
+            end_time_str = time_match.group(2)
 
-        # logger.debug(f"[DEBUG] Excel: '{full_title.strip()}' am '{start_datetime.date()}'.")
-        # Now check if the event with the full title already exists
-        existing_events = calendar.date_search(
-            start_datetime.replace(hour=0, minute=0, second=0),
-            end_datetime.replace(hour=23, minute=59, second=59)
-        )
-        event_exists = False
+            start_datetime = datetime.datetime.strptime(f"{date.strftime('%Y-%m-%d')} {start_time_str}", '%Y-%m-%d %H:%M')
+            end_datetime = datetime.datetime.strptime(f"{date.strftime('%Y-%m-%d')} {end_time_str}", '%Y-%m-%d %H:%M')
 
-        for event in existing_events:
-            event.load()
-            event_summary = event.vobject_instance.vevent.summary.value
-            event_start = event.vobject_instance.vevent.dtstart.value
-            event_end = (event.vobject_instance.vevent.dtend.value
-                            if hasattr(event.vobject_instance.vevent, 'dtend')
-                            else None)
-            # logger.debug(f"[DEBUG] {len(existing_events)} Termine gefunden.")
-            # Check if the beginnung of the event_summary is the name_without_brackets of the colleague
-            if event_summary.startswith(name_without_brackets):
-                # logger.debug(f"[DEBUG] Event '{event_summary}' gehört zu '{name_without_brackets}'.")
+            if start_datetime.tzinfo is None:
+                start_datetime = tz_berlin.localize(start_datetime)
+            if end_datetime.tzinfo is None:
+                end_datetime = tz_berlin.localize(end_datetime)
+            if end_datetime < start_datetime:
+                end_datetime += datetime.timedelta(days=1)
 
-                # Ensure event_start and event_end are datetime objects, and localize if necessary
-                if isinstance(event_start, datetime.date) and not isinstance(event_start, datetime.datetime):
-                    event_start = datetime.datetime.combine(event_start, datetime.time.min)
-                if isinstance(event_start, datetime.datetime) and event_start.tzinfo is None:
-                    event_start = tz_berlin.localize(event_start)
-                if event_end and isinstance(event_end, datetime.date) and not isinstance(event_end, datetime.datetime):
-                    event_end = datetime.datetime.combine(event_end, datetime.time.min)
-                if event_end and isinstance(event_end, datetime.datetime) and event_end.tzinfo is None:
-                    event_end = tz_berlin.localize(event_end)
+            # Get the basic title from the Excel entry (e.g., "Schnitt 2")
+            title = service_entry[time_match.end():].strip()
+            # Entferne "Info " und "(WT) " von dem Titel
+            title = re.sub(r'\s*\(WT\)|\s*Info ', '', title)
+            # logger.debug(f"[DEBUG] '{title}' ist der Titel des Events.")
+            # logger.debug(f"[DEBUG] Excel event: {title}, start: {start_time_str}, end: {end_time_str}")
+            # logger.debug(f"[DEBUG] Excel event: {cleaned_service_entry}")
+            full_title = f"{name_without_brackets}, {service_entry[time_match.end():].strip()}"
 
-                if rewrite:
-                    if event_start.date() == start_datetime.date():
-                        event.delete()
-                        continue
-                # Compare the fully generated title with the existing event's summary
-                if (event_summary.strip() == full_title.replace("\n", " ").replace("\r", "").strip() and
-                        event_start == start_datetime and
-                        event_end == end_datetime):
-                    event_exists = True
-                    # logger.debug(f"[DEBUG] Event '{full_title}' already exists. Skipping creation.")
-                    break
-                # logger.debug(f"[DEBUG] Excel: '{full_title.strip()}' am '{start_datetime.date()}'. "
-                #       f"Kalender: '{event_summary}' am '{event_start.date()}'.")
-                if event_start.date() == start_datetime.date():
-                    logger.debug(f"[DEBUG] Anderer Termin: '{event_summary}' am {start_datetime.strftime('%d.%m.%Y')} wird gelöscht.")
-                    event.delete()
-
-        # If the event does not exist, create it with all the information collected
-        if not event_exists:
-            # Create the description by including the break time (if available) and the task
-            description = f"Dienst: {title} von {name_without_brackets}, "
-            last_modified = datetime.datetime.now().strftime('%d.%m.%Y, %H:%M')
-            description += "Alle Angaben und Inhalte sind ohne Gewähr. "
-            description += f"Änderungsdatum: {last_modified}"
-
-            # Create the iCal event with the full description
-            # if is_holiday_flag:
-            #    logger.debug(f"[DEBUG] {start_date.strftime('%a, %d.%m.%Y')} ist ein Feiertag oder Wochenende: {holiday_name}")
-            ical_data = create_ical_event(
-                full_title, start_datetime, end_datetime, description=description
+            # logger.debug(f"[DEBUG] Excel: '{full_title.strip()}' am '{start_datetime.date()}'.")
+            # Now check if the event with the full title already exists
+            existing_events = calendar.date_search(
+                start=start_datetime.replace(hour=0, minute=0, second=0),
+                end=end_datetime.replace(hour=23, minute=59, second=59)
             )
-            if ical_data:
-                calendar.add_event(ical_data)
-                logger.debug(f"[Dienst] {start_datetime.strftime('%d.%m.%Y')}, "
-                        f"{start_datetime.strftime('%H:%M')} bis {end_datetime.strftime('%H:%M')}: {full_title}")
+            event_exists = False
 
+            for event in existing_events:
+                event.load()
+                event_summary = event.vobject_instance.vevent.summary.value
+                event_start = event.vobject_instance.vevent.dtstart.value
+                event_end = (event.vobject_instance.vevent.dtend.value
+                                if hasattr(event.vobject_instance.vevent, 'dtend')
+                                else None)
+                # logger.debug(f"[DEBUG] {len(existing_events)} Termine gefunden.")
+                # Check if the beginnung of the event_summary is the name_without_brackets of the colleague
+                if event_summary.startswith(name_without_brackets):
+                    # logger.debug(f"[DEBUG] Event '{event_summary}' gehört zu '{name_without_brackets}'.")
+
+                    # Ensure event_start and event_end are datetime objects, and localize if necessary
+                    if isinstance(event_start, datetime.date) and not isinstance(event_start, datetime.datetime):
+                        event_start = datetime.datetime.combine(event_start, datetime.time.min)
+                    if isinstance(event_start, datetime.datetime) and event_start.tzinfo is None:
+                        event_start = tz_berlin.localize(event_start)
+                    if event_end and isinstance(event_end, datetime.date) and not isinstance(event_end, datetime.datetime):
+                        event_end = datetime.datetime.combine(event_end, datetime.time.min)
+                    if event_end and isinstance(event_end, datetime.datetime) and event_end.tzinfo is None:
+                        event_end = tz_berlin.localize(event_end)
+
+                    if rewrite:
+                        if event_start.date() == start_datetime.date():
+                            event.delete()
+                            continue
+                    # Compare the fully generated title with the existing event's summary
+                    if (event_summary.strip() == full_title.replace("\n", " ").replace("\r", "").strip() and
+                            event_start == start_datetime and
+                            event_end == end_datetime):
+                        event_exists = True
+                        # logger.debug(f"[DEBUG] Event '{full_title}' already exists. Skipping creation.")
+                        break
+                    # logger.debug(f"[DEBUG] Excel: '{full_title.strip()}' am '{start_datetime.date()}'. "
+                    #       f"Kalender: '{event_summary}' am '{event_start.date()}'.")
+                    if event_start.date() == start_datetime.date():
+                        logger.debug(f"[DEBUG] Anderer Termin: '{event_summary}' am {start_datetime.strftime('%d.%m.%Y')} wird gelöscht.")
+                        event.delete()
+
+            # If the event does not exist, create it with all the information collected
+            if not event_exists:
+                # Create the description by including the break time (if available) and the task
+                description = f"Dienst: {title} von {name_without_brackets}, "
+                last_modified = datetime.datetime.now().strftime('%d.%m.%Y, %H:%M')
+                description += "Alle Angaben und Inhalte sind ohne Gewähr. "
+                description += f"Änderungsdatum: {last_modified}"
+
+                # Create the iCal event with the full description
+                # if is_holiday_flag:
+                #    logger.debug(f"[DEBUG] {start_date.strftime('%a, %d.%m.%Y')} ist ein Feiertag oder Wochenende: {holiday_name}")
+                ical_data = create_ical_event(
+                    full_title, start_datetime, end_datetime, description=description
+                )
+                if ical_data:
+                    calendar.add_event(ical_data)
+                    logger.debug(f"[Dienst] {start_datetime.strftime('%d.%m.%Y')}, "
+                            f"{start_datetime.strftime('%H:%M')} bis {end_datetime.strftime('%H:%M')}: {full_title}")
+    finally:
+        # Cancel the alarm if the script finishes before the timeout
+        signal.alarm(0)
 
 def process_excel_file(file_path, heute, schichten):
     df = pd.read_excel(file_path, header=None, engine='openpyxl')
@@ -336,6 +355,7 @@ def extract_date_from_filename(filename):
         return None  # Falls das Datum nicht gefunden wird
 
 # Main
+logger.debug(f"[INFO] Starte Gruppenkalenderaktualisierung Cutter...")
 locale.setlocale(locale.LC_TIME, 'de_DE.UTF-8')
 tz_berlin = pytz.timezone('Europe/Berlin')
 script_path = os.path.abspath(__file__)
@@ -393,7 +413,7 @@ heute = date.today()
 
 # Lösche alle Termine, die ein früheres Datum haben als gestern
 start_date = heute - timedelta(days=7)
-end_date = heute - timedelta(days=2)
+end_date = heute - timedelta(days=1)
 events = calendar.date_search(start=start_date, end=end_date)
 for event in events:
     vevent = event.icalendar_instance
@@ -402,7 +422,7 @@ for event in events:
         dtstart = component.get('DTSTART')
         dtstart = dtstart.dt if dtstart else "Unbekanntes Datum"
 deleted_count = sum(1 for event in events if not event.delete())
-logger.debug(f"{deleted_count} Termine wurden gelöscht.")
+logger.debug(f"[DEBUG] {deleted_count} alte Termine wurden gelöscht.")
 
 
 with_date, without_date = [], []
