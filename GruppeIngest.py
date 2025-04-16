@@ -18,6 +18,26 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dateutil.easter import easter
 from itertools import chain
+import logging
+from logging.handlers import RotatingFileHandler
+
+# Logging-Konfiguration
+log_formatter = logging.Formatter('%(message)s')
+log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Dienstplanscript.log")
+log_handler = RotatingFileHandler(log_file, maxBytes=1024 * 1024, backupCount=3)
+log_handler.setFormatter(log_formatter)
+log_handler.setLevel(logging.DEBUG)
+
+# Logger einrichten
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
+logger.addHandler(log_handler)
+
+# Ausgabe auf Konsole
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(log_formatter)
+console_handler.setLevel(logging.DEBUG)
+logger.addHandler(console_handler)
 
 # Initialisiere Timer
 timers = {}
@@ -36,12 +56,12 @@ def end_timer(timer_name, task_description):
         end_time = time.time()
         elapsed_time = end_time - timers[timer_name]
         # if timer_name == "gesamt":
-        #    print(f"[TIME] {task_description}: {elapsed_time:.2f} Sekunden", end="")
+        #    logger.debug(f"[TIME] {task_description}: {elapsed_time:.2f} Sekunden", end="")
         if not (timer_name in ("caldav", "initial", "gesamt") and elapsed_time <= 20):
-            print(f"[TIME] {task_description}: {elapsed_time:.2f} Sekunden")
+            logger.debug(f"[TIME] {task_description}: {elapsed_time:.2f} Sekunden")
         del timers[timer_name]  # Timer entfernen, wenn er fertig ist
     else:
-        print(f"[ERROR] Kein aktiver Timer mit dem Namen: {timer_name}")
+        logger.error(f"Kein aktiver Timer mit dem Namen: {timer_name}")
 
 def load_from_config(config_path, key):
     try:
@@ -49,7 +69,7 @@ def load_from_config(config_path, key):
             config = json.load(config_file)
             return config.get(key, [])
     except Exception as e:
-        print(f"Fehler beim Laden der Konfigurationsdatei: {e}")
+        logger.error(f"Fehler beim Laden der Konfigurationsdatei: {e}")
         return []
 
 def create_ical_event(full_title, start_datetime, end_datetime, description):
@@ -114,14 +134,14 @@ END:VCALENDAR
 
         return ical_event
     except Exception as e:
-        print(f"[ERROR] Fehler beim Erstellen des Events: {e}")
+        logger.error(f"[ERROR] Fehler beim Erstellen des Events: {e}")
         return None
 
 # Funktion zur Verarbeitung eines zeitgebundenen Events
 def process_timed_event(service_entry, start_date, name, schichten):
     # Extract start and end time from Excel entry
     time_match = re.match(r'(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})', service_entry)
-    # print(f"[DEBUG] '{service_entry}' ist ein zeitgebundenes Event.")
+    # logger.debug(f"[DEBUG] '{service_entry}' ist ein zeitgebundenes Event.")
     if time_match:
         start_time_str = time_match.group(1)
         end_time_str = time_match.group(2)
@@ -141,16 +161,16 @@ def process_timed_event(service_entry, start_date, name, schichten):
         # Entferne "Info " und "(WT) " von dem Titel
         title = re.sub(r'\s*\(WT\)|\s*Info ', '', title)
         schichten = [item for sublist in schichten for item in sublist]
-        # print(f"[DEBUG] '{title}' ist der Titel des Events.")
-        # print(f"[DEBUG] '{schichten}' ist die Liste der Schichten.")
+        # logger.debug(f"[DEBUG] '{title}' ist der Titel des Events.")
+        # logger.debug(f"[DEBUG] '{schichten}' ist die Liste der Schichten.")
         # Prüfe, ob der Titel in der Liste von schichten vorkommt
         if title not in schichten:
             return
-        # print(f"[DEBUG] Excel event: {title}, start: {start_time_str}, end: {end_time_str}")
-        # print(f"[DEBUG] Excel event: {cleaned_service_entry}")
+        # logger.debug(f"[DEBUG] Excel event: {title}, start: {start_time_str}, end: {end_time_str}")
+        # logger.debug(f"[DEBUG] Excel event: {cleaned_service_entry}")
         full_title = f"{name}, {service_entry[time_match.end():].strip()}"
 
-        print(f"[DEBUG] Excel: '{full_title.strip()}' am '{start_datetime.date()}'.")
+        # logger.debug(f"[DEBUG] Excel: '{full_title.strip()}' am '{start_datetime.date()}'.")
         # Now check if the event with the full title already exists
         existing_events = calendar.date_search(
             start_datetime.replace(hour=0, minute=0, second=0),
@@ -165,10 +185,10 @@ def process_timed_event(service_entry, start_date, name, schichten):
             event_end = (event.vobject_instance.vevent.dtend.value
                             if hasattr(event.vobject_instance.vevent, 'dtend')
                             else None)
-            # print(f"[DEBUG] {len(existing_events)} Termine gefunden.")
+            # logger.debug(f"[DEBUG] {len(existing_events)} Termine gefunden.")
             # Check if the beginnung of the event_summary is the name of the colleague
             if event_summary.startswith(name):
-                # print(f"[DEBUG] Event '{event_summary}' gehört zu '{name}'.")
+                # logger.debug(f"[DEBUG] Event '{event_summary}' gehört zu '{name}'.")
 
                 # Ensure event_start and event_end are datetime objects, and localize if necessary
                 if isinstance(event_start, datetime.date) and not isinstance(event_start, datetime.datetime):
@@ -189,12 +209,12 @@ def process_timed_event(service_entry, start_date, name, schichten):
                         event_start == start_datetime and
                         event_end == end_datetime):
                     event_exists = True
-                    # print(f"[DEBUG] Event '{full_title}' already exists. Skipping creation.")
+                    # logger.debug(f"[DEBUG] Event '{full_title}' already exists. Skipping creation.")
                     break
-                # print(f"[DEBUG] Excel: '{full_title.strip()}' am '{start_datetime.date()}'. "
+                # logger.debug(f"[DEBUG] Excel: '{full_title.strip()}' am '{start_datetime.date()}'. "
                 #       f"Kalender: '{event_summary}' am '{event_start.date()}'.")
                 if event_start.date() == start_datetime.date():
-                    print(f"[DEBUG] Anderer Termin: '{event_summary}' am {start_datetime.strftime('%d.%m.%Y')} wird gelöscht.")
+                    logger.debug(f"[DEBUG] Anderer Termin: '{event_summary}' am {start_datetime.strftime('%d.%m.%Y')} wird gelöscht.")
                     event.delete()
 
         # If the event does not exist, create it with all the information collected
@@ -207,23 +227,23 @@ def process_timed_event(service_entry, start_date, name, schichten):
 
             # Create the iCal event with the full description
             # if is_holiday_flag:
-            #    print(f"[DEBUG] {start_date.strftime('%a, %d.%m.%Y')} ist ein Feiertag oder Wochenende: {holiday_name}")
+            #    logger.debug(f"[DEBUG] {start_date.strftime('%a, %d.%m.%Y')} ist ein Feiertag oder Wochenende: {holiday_name}")
             ical_data = create_ical_event(
                 full_title, start_datetime, end_datetime, description=description
             )
             if ical_data:
                 calendar.add_event(ical_data)
-                print(f"[Dienst] {start_datetime.strftime('%d.%m.%Y')}, "
+                logger.debug(f"[Dienst] {start_datetime.strftime('%d.%m.%Y')}, "
                         f"{start_datetime.strftime('%H:%M')} bis {end_datetime.strftime('%H:%M')}: {full_title}")
 
 
 def process_excel_file(file_path, heute, colleagues, schichten):
     df = pd.read_excel(file_path, header=None, engine='openpyxl')
-    # print(f"[DEBUG] Verfügbare Namen: {df[0].unique()}")
+    # logger.debug(f"[DEBUG] Verfügbare Namen: {df[0].unique()}")
     identifier_row = df[df[0].str.contains("I", na=False)].iloc[0]
     # Versuch, den Namen flexibler zu finden
     for name in colleagues:
-        # print(f"[DEBUG] Suche nach '{name}' in der Excel-Datei...")
+        # logger.debug(f"[DEBUG] Suche nach '{name}' in der Excel-Datei...")
         if isinstance(name, list):  # Ensure name is a string
             name = name[0]
         try:
@@ -237,7 +257,7 @@ def process_excel_file(file_path, heute, colleagues, schichten):
                     df[0].str.strip().str.casefold().str.replace(r'\s*[\r\n]*\(.*\)\s*[\r\n]*', '') == user_name_cleaned.casefold()
                 ].iloc[0]
             except IndexError:
-                print(f"[ERROR] '{user_name_cleaned}' nicht gefunden.")
+                logger.error(f"[ERROR] '{user_name_cleaned}' nicht gefunden.")
                 continue
         for day in range(1, 8):  # Spalten B bis H (1 bis 7)
             date = identifier_row[day]
@@ -262,14 +282,14 @@ def process_excel_file(file_path, heute, colleagues, schichten):
                     r'\1 - \2',
                     service_entry
                 )  # Vereinheitliche das Zeitformat auf "HH:MM - HH:MM" (mit oder ohne Leerzeichen um den Bindestrich)
-            # print(f"[INFO] {identifier_row[day].strftime('%a, %d.%m.%Y')}, {service_entry}")
+            # logger.info(f"[INFO] {identifier_row[day].strftime('%a, %d.%m.%Y')}, {service_entry}")
 
             start_date = pd.to_datetime(date)
             if start_date.date() < heute - timedelta(days=1) or start_date.date() > heute + timedelta(days=1):
-                # print(f"[DEBUG] {start_date.strftime('%a, %d.%m.%Y')} ist außerhalb des Zeitrahmens.")
+                # logger.debug(f"[DEBUG] {start_date.strftime('%a, %d.%m.%Y')} ist außerhalb des Zeitrahmens.")
                 continue
             if re.search(r'\b\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\b', service_entry):
-                # print(f"[DEBUG] '{service_entry}' ist ein zeitgebundenes Event.")
+                # logger.debug(f"[DEBUG] '{service_entry}' ist ein zeitgebundenes Event.")
                 process_timed_event(service_entry, start_date, name, schichten)
 
 
@@ -326,9 +346,9 @@ locale.setlocale(locale.LC_TIME, 'de_DE.UTF-8')
 tz_berlin = pytz.timezone('Europe/Berlin')
 script_path = os.path.abspath(__file__)
 folder_path = os.path.dirname(script_path)
-# print(f"[DEBUG] folder_path: {folder_path}")
+# logger.debug(f"[DEBUG] folder_path: {folder_path}")
 config_path = os.path.join(folder_path, 'config.json')
-# print(f"[DEBUG] Config: {config_path}")
+# logger.debug(f"[DEBUG] Config: {config_path}")
 
 parser = argparse.ArgumentParser(description="Dienst zu Gruppenkalender Ingest")
 parser.add_argument("-r", "--rewrite", help="Alle vorhandenen Termine im Zeitbereich neu erstellen", action="store_true")
@@ -342,28 +362,28 @@ caldav_start = load_credentials(caldavlogin, config_path)
 calendar_name = 'Dienstplan Ingest'
 caldav_url = caldav_start + 'dienstplan-ingest/'
 
-# print(f"[DEBUG] Kalendername: {calendar_name}")
-# print(f"[DEBUG] Kalender-URL: {caldav_url}")
+# logger.debug(f"[DEBUG] Kalendername: {calendar_name}")
+# logger.debug(f"[DEBUG] Kalender-URL: {caldav_url}")
 
 start_timer("caldav")
 try:
-    # print(f"[DEBUG] Verbinde mit CalDAV-Server '{service_name}'...")
+    # logger.debug(f"[DEBUG] Verbinde mit CalDAV-Server '{service_name}'...")
     login_service = "login_" + service_name
     username, password = load_credentials(login_service, config_path)
-    # print(f"[DEBUG] Username und Passwort geladen: {username}")
+    # logger.debug(f"[DEBUG] Username und Passwort geladen: {username}")
     client = DAVClient(caldav_start, username=username, password=password)
     principal = client.principal()
     try:
         calendar = principal.calendar(name=calendar_name)
     except Exception as e:
-        print(f"[ERROR] Kalender nicht gefunden: {e}")
+        logger.error(f"[ERROR] Kalender nicht gefunden: {e}")
 
     # Erfolgreiche Verbindung herstellen, falls Kalender gefunden oder erstellt wurde
     if not calendar:
-        print(f"[ERROR] Es konnte keine Verbindung zum Kalender '{calendar_name}' hergestellt werden.")
+        logger.error(f"[ERROR] Es konnte keine Verbindung zum Kalender '{calendar_name}' hergestellt werden.")
 
 except Exception as e:
-    print(f"[ERROR] CalDAV-Verbindung fehlgeschlagen oder Fehler bei der Kalendererstellung: {e}")
+    logger.error(f"[ERROR] CalDAV-Verbindung fehlgeschlagen oder Fehler bei der Kalendererstellung: {e}")
     sys.exit(1)
 end_timer("caldav", "Verbindung zu CalDAV")
 eingetragene_termine = []
@@ -388,7 +408,7 @@ for event in events:
         dtstart = component.get('DTSTART')
         dtstart = dtstart.dt if dtstart else "Unbekanntes Datum"
 deleted_count = sum(1 for event in events if not event.delete())
-print(f"{deleted_count} Termine wurden gelöscht.")
+logger.debug(f"{deleted_count} Termine wurden gelöscht.")
 
 
 with_date, without_date = [], []
@@ -400,22 +420,18 @@ xlsx_files = list(chain((f[0] for f in with_date), without_date))
 
 ingestpath = os.path.join(folder_path, 'ingest.json')
 colleagues = load_from_config(ingestpath, "colleagues")
-# print(f"[DEBUG] Verfügbare Namen: {colleagues}")
+# logger.debug(f"[DEBUG] Verfügbare Namen: {colleagues}")
 schichten = load_from_config(ingestpath, "schichten")
-# print(f"[DEBUG] Verfügbare Schichten: {schichten}")
+# logger.debug(f"[DEBUG] Verfügbare Schichten: {schichten}")
 
 if xlsx_files:
     for file_path in xlsx_files:
         file_name = os.path.basename(file_path)
-        # print(f"[INFO] Verarbeite Datei: {file_name}")
+        # logger.debug(f"[INFO] Verarbeite Datei: {file_name}")
         process_excel_file(file_path, heute, colleagues, schichten)
 else:
     print("[DEBUG] Keine .xlsx-Dateien gefunden.")
 
-
-
-
-
 if eingetragene_termine:
-    print(f"[INFO] {len(eingetragene_termine)} neue Termine eingetragen.")
+    logger.debug(f"[INFO] {len(eingetragene_termine)} neue Termine eingetragen.")
 end_timer("gesamt", "Zeit")
