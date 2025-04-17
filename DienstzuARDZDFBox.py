@@ -62,11 +62,11 @@ def parse_html_for_workplace_info(html_file_path):  # Function to parse HTML and
                 cols = row.find_all('td')
                 if len(cols) >= 5:
                     info.append({
-                        'dienstname': cols[0].text.strip(),
-                        'dienstzeit': cols[1].text.strip(),
-                        'arbeitsplatz': cols[2].text.strip(),
-                        'pausenzeit': cols[3].text.strip(),
-                        'task': cols[4].text.strip()
+                        'dienstname': cols[0].text.replace('\u00A0', ' ').strip(),
+                        'dienstzeit': cols[1].text.replace('\u00A0', ' ').strip(),
+                        'arbeitsplatz': cols[2].text.replace('\u00A0', ' ').strip(),
+                        'pausenzeit': cols[3].text.replace('\u00A0', ' ').strip(),
+                        'task': cols[4].text.replace('\u00A0', ' ').strip()
                     })
         return info
 
@@ -303,15 +303,19 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
             for info in workplace_info:
                 # Titel ohne (WT) und "Info" finden
                 # print(f"[DEBUG] {service_entry[time_match.end():].strip()} -> {cleaned_service_entry}")
-                if cleaned_service_entry in info['dienstname'].strip():
-                    # print(f"[DEBUG] {info['dienstname']} gefunden.")
+                dienstname = info['dienstname'].replace("Samstag: ", "").replace("Sonntag: ", "").strip()
+                if cleaned_service_entry in dienstname:
+                    # print(f"[DEBUG] {dienstname} gefunden.")
                     # DIENSTZEIT ist im HHMM-HHMM Format
+                    # print(f"[DEBUG] Dienstzeit: {info['dienstzeit']}")
                     html_time_match = re.match(
                         r'(\d{4})\s*-\s*(\d{4})', info['dienstzeit']
                     )
                     if html_time_match:
                         html_start_time = f"{html_time_match.group(1)[:2]}:{html_time_match.group(1)[2:]}"
+                        # print(f"[DEBUG] HTML Startzeit: {html_start_time}")
                         html_end_time = f"{html_time_match.group(2)[:2]}:{html_time_match.group(2)[2:]}"
+                        # print(f"[DEBUG] HTML Endzeit: {html_end_time}")
 
                         if html_start_time == start_time_str and html_end_time == end_time_str:
                             workplace = info.get('arbeitsplatz', None)
@@ -424,7 +428,7 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
             print(f"[ERROR] Fehler beim Speichern oder Löschen des Events: {full_title}, {e}")
 
 
-def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we, countnightshifts, changedlaufzettel, laufzettel_datum):
+def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we, countnightshifts, nextlaufzettel):
     df = pd.read_excel(file_path, header=None, engine='openpyxl')
     # print(f"[DEBUG] Verfügbare Namen: {df[0].unique()}")
     identifier_row = df[df[0].str.contains("I", na=False)].iloc[0]
@@ -510,12 +514,13 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
         # print(f"[INFO] {identifier_row[day].strftime('%a, %d.%m.%Y')}, {service_entry}")
 
         start_date = pd.to_datetime(date)
-        if start_date.date() >= laufzettel_datum.date() and not changedlaufzettel:
-            print(f"[DEBUG] Verwende den aktuellen Laufzettel für {start_date.strftime('%d.%m.%Y')}, da laufzettel_datum={laufzettel_datum.date()}.")
-            html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Laufzettel_' + laufzettel_datum.strftime('%Y%m%d') + '.html')
+        if start_date.date() >= nextlaufzettel.date():
+            html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Laufzettel_' + nextlaufzettel.strftime('%Y%m%d') + '.html')
             laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info(html_file_path)
-            changedlaufzettel = True
-            print(f"[DEBUG] Nutze {html_file_path} als neuen Laufzettel.")
+            # print(f"[DEBUG] Nutze {html_file_path} als neuen Laufzettel.")
+            # Nächsten Laufzettel bestimmen
+            nextlaufzettel = getnextlaufzettel(nextlaufzettel)
+            # print(f"[DEBUG] Dienste: {laufzettel_werktags} und {laufzettel_we}")
         # Abfrage zur Unterscheidung zwischen ganztägigen und zeitgebundenen Terminen
         if re.search(r'\b\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\b', service_entry):
             process_timed_event(
@@ -525,7 +530,25 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
             )
         else:
             process_all_day_event(service_entry, start_date)
-    return changedlaufzettel
+    return nextlaufzettel
+
+def getnextlaufzettel(nextlaufzettel):
+    # Die HTML-Dateien durchsuchen, ob nach diesem Laufzettel noch ein neuer Laufzettel existiert
+    html_files = [f for f in os.listdir(os.path.dirname(script_path)) if re.match(r'Laufzettel_\d{8}\.html', f)]
+    if html_files:
+        # sortiere die HTML-Dateien nach dem Datum im Dateinamen
+        html_files.sort(reverse=False)
+        # print(f"[DEBUG] Sortierte HTML-Dateien: {html_files}")
+        for html_file in html_files:
+            filename_with_date = os.path.join(folder_path, html_file)
+            laufzettel_datum = datetime.datetime.strptime(re.search(r'Laufzettel_(\d{8})\.html', filename_with_date).group(1), "%Y%m%d")
+            if laufzettel_datum.date() > nextlaufzettel.date():
+                nextlaufzettel = laufzettel_datum
+                print(f"[DEBUG] Nächster Laufzettel wäre: {nextlaufzettel.strftime('%d.%m.%Y')}")
+                return nextlaufzettel
+    # Wenn kein neuerer Laufzettel gefunden wurde, gib den aktuellen zurück
+    return nextlaufzettel
+
 
 
 def extract_date(entry):
@@ -725,17 +748,22 @@ end_timer("caldav", "Verbindung zu CalDAV")
 eingetragene_termine = []
 target_folder = os.path.join(folder_path, "Plaene", "MAZ_TAZ Dienstplan")
 html_files = [f for f in os.listdir(folder_path) if re.match(r'Laufzettel_\d{8}\.html', f)]
+# print(f"[INFO] Laufzettel: {html_files}")
 laufzettel_datum = datetime.datetime.min.replace(tzinfo=tz_berlin)  # Ensure it has timezone info
+# Finde den ersten Laufzettel, der noch nicht abgelaufen ist
 if html_files:
-    filename_with_date = html_files[0]
-    laufzettel_datum = datetime.datetime.strptime(re.search(r'Laufzettel_(\d{8})\.html', filename_with_date).group(1), "%Y%m%d")
-    #print(f"[DEBUG] Neuer Laufzettel ab dem {laufzettel_datum.strftime('%d.%m.%Y')}.")
-if laufzettel_datum.date() <= date.today():
-    html_file_path = os.path.join(folder_path, filename_with_date)
-    changedlaufzettel = True
-else:
-    html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Laufzettel.html')
-# print(f"[DEBUG] Verwende {html_file_path} als Laufzettel.")
+    html_files.sort(reverse=False)
+    nextlaufzettel = datetime.datetime.max.replace(tzinfo=tz_berlin)
+    for html_file in html_files:
+        filename_with_date = os.path.join(folder_path, html_file)
+        laufzettel_datum = datetime.datetime.strptime(re.search(r'Laufzettel_(\d{8})\.html', filename_with_date).group(1), "%Y%m%d")
+        # print(f"[DEBUG] Neuer Laufzettel ab dem {laufzettel_datum.strftime('%d.%m.%Y')}.")
+        if laufzettel_datum.date() <= date.today() and laufzettel_datum.date() < nextlaufzettel.date():
+            nextlaufzettel = laufzettel_datum
+            html_file_path = os.path.join(folder_path, filename_with_date)
+    print(f"[DEBUG] Aktueller Laufzettel: {html_file_path} als Laufzettel.")
+    nextlaufzettel = getnextlaufzettel(nextlaufzettel)
+    print(f"[DEBUG] Nächster Laufzettel ab dem {nextlaufzettel.strftime('%d.%m.%Y')}")
 laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info(html_file_path)
 end_timer("initial", "Initialisierung")
 # print(f"[DEBUG] Absoluter Pfad zum Skript: {script_path}")
@@ -761,7 +789,7 @@ if xlsx_files:
         # start_timer("xlsx")
         # print(f"[DEBUG] Verarbeite Datei: {file_name}")
         changedlaufzettel = process_excel_file(
-            file_path, user_name, laufzettel_werktags, laufzettel_we, countnightshifts, changedlaufzettel, laufzettel_datum
+            file_path, user_name, laufzettel_werktags, laufzettel_we, countnightshifts, nextlaufzettel
         )
         # end_timer("xlsx", f"Verarbeitung der Excel-Datei {file_name}")
 else:
