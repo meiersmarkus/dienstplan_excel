@@ -275,7 +275,6 @@ def process_excel_file(file_path, heute, schichten):
             schicht = re.sub(r'\s*\(WT\)|\s*Info ', '', schicht)
             # Prüfe, ob einer der Schichtbegriffe (schichten) schicht entspricht.
             if schicht in schichten:
-
                 # Überprüfung, ob die Zelle leer oder NaN ist
                 if pd.isna(service_entry) or not isinstance(service_entry, str):
                     service_entry = "FT"
@@ -285,6 +284,11 @@ def process_excel_file(file_path, heute, schichten):
                                                 .replace('    ', ' ') \
                                                 .replace('   ', ' ') \
                                                 .replace('  ', ' ')
+                    service_entry = re.sub(
+                        r'(\b\d{2})\.(\d{2}\b)',
+                        r'\1:\2',
+                        service_entry
+                    )  # Ersetze Punkte im Zeitformat "HH.MM" durch Doppelpunkte "HH:MM"
                     service_entry = re.sub(
                         r'(\b\d{2}:\d{2})\s*-\s*(\d{2}:\d{2}\b)',
                         r'\1 - \2',
@@ -353,7 +357,7 @@ def extract_date_from_filename(filename):
         return None  # Falls das Datum nicht gefunden wird
 
 # Main
-logger.debug(f"[INFO] Starte Gruppenkalenderaktualisierung Cutter...")
+logger.debug(f"[INFO] Starte Gruppenkalenderaktualisierung VPA...")
 locale.setlocale(locale.LC_TIME, 'de_DE.UTF-8')
 tz_berlin = pytz.timezone('Europe/Berlin')
 script_path = os.path.abspath(__file__)
@@ -362,7 +366,7 @@ folder_path = os.path.dirname(script_path)
 config_path = os.path.join(folder_path, 'config.json')
 # logger.debug(f"[DEBUG] Config: {config_path}")
 
-parser = argparse.ArgumentParser(description="Dienst zu Gruppenkalender Cutter")
+parser = argparse.ArgumentParser(description="Dienst zu Gruppenkalender VPA")
 parser.add_argument("-r", "--rewrite", help="Alle vorhandenen Termine im Zeitbereich neu erstellen", action="store_true")
 
 args = parser.parse_args()
@@ -371,8 +375,8 @@ service_name = "ard"
 
 caldavlogin = "caldav" + service_name
 caldav_start = load_credentials(caldavlogin, config_path)
-calendar_name = 'Dienstplan Cutter'
-caldav_url = caldav_start + 'dienstplan-cutter/'
+calendar_name = 'Dienstplan VPA'
+caldav_url = caldav_start + 'dienstplan-vpa/'
 
 # logger.debug(f"[DEBUG] Kalendername: {calendar_name}")
 # logger.debug(f"[DEBUG] Kalender-URL: {caldav_url}")
@@ -430,7 +434,7 @@ for file in xlsx_files:
 with_date.sort(key=lambda x: x[1])
 xlsx_files = list(chain((f[0] for f in with_date), without_date))
 
-ingestpath = os.path.join(folder_path, 'CutterSV.json')
+ingestpath = os.path.join(folder_path, 'vpa.json')
 schichten = load_from_config(ingestpath, "schichten")
 schichten = [item for sublist in schichten for item in sublist]
 # logger.debug(f"[DEBUG] Verfügbare Schichten: {schichten}")
