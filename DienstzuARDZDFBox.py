@@ -126,10 +126,7 @@ def create_ical_event(
     start_datetime,
     end_datetime=None,
     all_day=False,
-    description=None,
-    workplace=None,  # Add workplace parameter
-    break_time=None,
-    task=None
+    description=None
 ):
     if any(term in title for term in ['FT']) and user_name == load_credentials("user2", config_path):
         # print(f"[DEBUG] {title} übersprungen, keine FT ausgewählt wurde.")
@@ -296,7 +293,7 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
         break_time = None
         task = None
 
-        is_holiday_flag, holiday_name = is_holiday_or_weekend(start_date.date())
+        is_holiday_flag = is_holiday_or_weekend(start_date.date())
         workplace_info = laufzettel_we if is_holiday_flag else laufzettel_werktags
         try:
             cleaned_service_entry = re.sub(r'\s*\(WT\)|\s*Info ', '', service_entry[time_match.end():].strip())
@@ -415,9 +412,7 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
                 # if is_holiday_flag:
                 #    print(f"[DEBUG] {start_date.strftime('%a, %d.%m.%Y')} ist ein Feiertag oder Wochenende: {holiday_name}")
                 ical_data = create_ical_event(
-                    full_title, start_datetime, end_datetime,
-                    workplace=workplace, break_time=break_time,
-                    task=task, description=description
+                    full_title, start_datetime, end_datetime, description=description
                 )
                 if ical_data:
                     calendar.add_event(ical_data)
@@ -459,7 +454,7 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
                     # Prüfe Laufzettelwechsel
                     # print(f"[DEBUG] Prüfe Laufzettelwechsel für {start_datetime.date()} und {nextlaufzettel.date()}")
                     if nextlaufzettel and isinstance(nextlaufzettel, datetime.datetime) and start_datetime.date() >= nextlaufzettel.date():
-                        print(f"[INFO] Wechsel zu Laufzettel ab {nextlaufzettel.strftime('%d.%m.%Y')}")
+                        # print(f"[INFO] Wechsel zu Laufzettel ab {nextlaufzettel.strftime('%d.%m.%Y')}")
                         html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
                                                     'Laufzettel_' + nextlaufzettel.strftime('%Y%m%d') + '.html')
                         laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info(html_file_path)
@@ -467,7 +462,7 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
                         next_date = getnextlaufzettel(nextlaufzettel)
                         if next_date and next_date != nextlaufzettel:
                             nextlaufzettel = next_date
-                            print(f"[DEBUG] Nächster Laufzettel wird sein: {nextlaufzettel.strftime('%d.%m.%Y')}")
+                            # print(f"[DEBUG] Nächster Laufzettel wird sein: {nextlaufzettel.strftime('%d.%m.%Y')}")
 
                     existing_events = calendar.date_search(start_datetime, start_datetime + pd.Timedelta(days=1))
                     # print(f"[DEBUG] Prüfe {start_datetime.strftime('%d.%m.%Y')} auf Termine.")
@@ -514,14 +509,18 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
 
             # Prüfe Laufzettelwechsel basierend auf latest_date
             if nextlaufzettel and latest_date >= nextlaufzettel.date():
-                print(f"[INFO] Wechsel zu Laufzettel ab {nextlaufzettel.strftime('%d.%m.%Y')}")
+                # print(f"[INFO] Wechsel zu Laufzettel ab {nextlaufzettel.strftime('%d.%m.%Y')}")
                 html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
                                             'Laufzettel_' + nextlaufzettel.strftime('%Y%m%d') + '.html')
                 laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info(html_file_path)
+                current_laufzettel = nextlaufzettel
                 next_date = getnextlaufzettel(nextlaufzettel)
                 if next_date and next_date != nextlaufzettel:
                     nextlaufzettel = next_date
-                    print(f"[DEBUG] Nächster Laufzettel wird sein: {nextlaufzettel.strftime('%d.%m.%Y')}")
+                    # print(f"[DEBUG] Nächster Laufzettel wird sein: {nextlaufzettel.strftime('%d.%m.%Y')}")
+                else:
+                    # print(f"[INFO] Kein weiterer Laufzettel nach {current_laufzettel.strftime('%d.%m.%Y')} verfügbar")
+                    nextlaufzettel = None
 
         # Überprüfung, ob die Zelle leer oder NaN ist
         if pd.isna(service_entry) or not isinstance(service_entry, str):
@@ -546,9 +545,7 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
 
         # Prüfe ob nextlaufzettel None ist
         # print(f"[DEBUG] Nächster Laufzettel: {nextlaufzettel}")
-        if nextlaufzettel is None:
-            print("[WARNING] Kein nächster Laufzettel verfügbar, verwende aktuellen weiter")
-        else:
+        if nextlaufzettel is not None:
             # Prüfe ob das aktuelle oder späteste Datum den Laufzettel-Wechsel erfordert
             if (start_date.date() >= nextlaufzettel.date()):
                 # print(f"[INFO] Wechsel zu Laufzettel ab {nextlaufzettel.strftime('%d.%m.%Y')}")
@@ -558,7 +555,7 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
                 next_date = getnextlaufzettel(nextlaufzettel)
                 if next_date and next_date != nextlaufzettel:  # Prüfe ob ein neues Datum gefunden wurde
                     nextlaufzettel = next_date
-                    print(f"[DEBUG] Nächster Laufzettel wird sein: {nextlaufzettel.strftime('%d.%m.%Y')}")
+                    # print(f"[DEBUG] Nächster Laufzettel wird sein: {nextlaufzettel.strftime('%d.%m.%Y')}")
 
         # Abfrage zur Unterscheidung zwischen ganztägigen und zeitgebundenen Terminen
         if re.search(r'\b\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\b', service_entry):
@@ -586,12 +583,15 @@ def initialize_laufzettel():
     # Sammle alle Laufzettel-Daten
     laufzettel_dates = []
     for html_file in html_files:
-        # print(f"[DEBUG] Laufzettel-Datei: {html_file}")
-        laufzettel_datum = datetime.datetime.strptime(
-            re.search(r'Laufzettel_(\d{8})\.html', html_file).group(1), 
-            "%Y%m%d"
-        )
-        laufzettel_dates.append(laufzettel_datum)
+        try:
+            laufzettel_datum = datetime.datetime.strptime(
+                re.search(r'Laufzettel_(\d{8})\.html', html_file).group(1),
+                "%Y%m%d"
+            )
+            laufzettel_dates.append(laufzettel_datum)
+        except Exception as e:
+            print(f"[ERROR] Fehler beim Parsen des Datums aus {html_file}: {e}")
+            continue
     
     # Finde den aktuellen Laufzettel (letzter vor oder gleich heute)
     valid_current = [d for d in laufzettel_dates if d.date() <= today]
@@ -605,9 +605,9 @@ def initialize_laufzettel():
     
     if current_laufzettel:
         html_file_path = os.path.join(folder_path, f'Laufzettel_{current_laufzettel.strftime("%Y%m%d")}.html')
-        print(f"[DEBUG] Aktueller Laufzettel: {current_laufzettel.strftime('%d.%m.%Y')}")
-        if nextlaufzettel:
-            print(f"[DEBUG] Nächster Laufzettel ab: {nextlaufzettel.strftime('%d.%m.%Y')}")
+        # print(f"[DEBUG] Aktueller Laufzettel: {current_laufzettel.strftime('%d.%m.%Y')}")
+        # if nextlaufzettel:
+            # print(f"[DEBUG] Nächster Laufzettel ab: {nextlaufzettel.strftime('%d.%m.%Y')}")
         laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info(html_file_path)
         return current_laufzettel, nextlaufzettel, (laufzettel_werktags, laufzettel_we)
     return None, None, None
@@ -622,7 +622,7 @@ def getnextlaufzettel(nextlaufzettel):
     html_files = [f for f in os.listdir(folder_path) if re.match(r'Laufzettel_\d{8}\.html', f)]
     if not html_files:
         print("[WARNING] Keine Laufzettel-Dateien gefunden")
-        return nextlaufzettel
+        return None
 
     # Sammle alle Laufzettel-Daten
     laufzettel_dates = []
@@ -646,11 +646,8 @@ def getnextlaufzettel(nextlaufzettel):
         next_date = min(valid_next)
         # print(f"[DEBUG] Gefunden: Nächster Laufzettel ab {next_date.strftime('%d.%m.%Y')}")
         return next_date
-    else:
-        # print(f"[DEBUG] Kein weiterer Laufzettel gefunden")
-        nextlaufzettel = None
     
-    # print(f"[DEBUG] Kein weiterer Laufzettel gefunden, behalte aktuellen ({nextlaufzettel.strftime('%d.%m.%Y')})")
+    # print(f"[DEBUG] Kein weiterer Laufzettel nach {nextlaufzettel.strftime('%d.%m.%Y')} gefunden")
     return None
 
 
