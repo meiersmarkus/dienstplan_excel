@@ -340,6 +340,7 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
 
             # print(f"[DEBUG] Full event title: {full_title}")
             # print(f"[DEBUG] Excel: '{full_title.strip()}' am '{start_datetime.date()}' von '{start_datetime.time()}' bis '{end_datetime.time()}' Uhr.")
+            # print(f"[DEBUG] Prüfe '{full_title.strip()}' am '{start_datetime.date()}' mit Laufzetteldatei vom '{current_laufzettel.strftime('%d.%m.%Y')}'")  
             # Now check if the event with the full title already exists
             existing_events = calendar.date_search(
                 start_datetime.replace(hour=0, minute=0, second=0),
@@ -582,8 +583,8 @@ def initialize_laufzettel():
             print(f"[ERROR] Fehler beim Parsen des Datums aus {html_file}: {e}")
             continue
     
-    # Finde den aktuellen Laufzettel (letzter vor oder gleich heute)
-    valid_current = [d for d in laufzettel_dates if d.date() <= today]
+    # Finde den aktuellen Laufzettel (letzter vor oder gleich vor einer Woche)
+    valid_current = [d for d in laufzettel_dates if d.date() <= today - datetime.timedelta(days=8)]
     if valid_current:
         current_laufzettel = max(valid_current)
         
@@ -596,7 +597,7 @@ def initialize_laufzettel():
         html_file_path = os.path.join(folder_path, f'Laufzettel_{current_laufzettel.strftime("%Y%m%d")}.html')
         # print(f"[DEBUG] Aktueller Laufzettel: {current_laufzettel.strftime('%d.%m.%Y')}")
         # if nextlaufzettel:
-            # print(f"[DEBUG] Nächster Laufzettel ab: {nextlaufzettel.strftime('%d.%m.%Y')}")
+        #     print(f"[DEBUG] Nächster Laufzettel ab: {nextlaufzettel.strftime('%d.%m.%Y')}")
         laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info(html_file_path)
         return laufzettel_werktags, laufzettel_we
     return None, None
