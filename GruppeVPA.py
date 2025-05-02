@@ -344,7 +344,7 @@ def process_excel_file(file_path, heute, schichten, laufzettel_werktags, laufzet
             date = pd.to_datetime(date).date()
         except Exception:
             continue
-        if not (heute - timedelta(days=1) <= date <= heute):
+        if date != heute:
             # logger.debug(f"[DEBUG] {start_date.strftime('%a, %d.%m.%Y')} ist außerhalb des Zeitrahmens.")
             continue
         # Durchsuche die Spalte unterhalb der Datumzeile

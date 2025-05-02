@@ -293,7 +293,7 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
         break_time = None
         task = None
 
-        is_holiday_flag = is_holiday_or_weekend(start_date.date())
+        is_holiday_flag, holiday_name = is_holiday_or_weekend(start_date.date())
         workplace_info = laufzettel_we if is_holiday_flag else laufzettel_werktags
         try:
             cleaned_service_entry = re.sub(r'\s*\(WT\)|\s*Info ', '', service_entry[time_match.end():].strip())
@@ -301,7 +301,7 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
                 dienstname = info['dienstname'].replace("Samstag: ", "").replace("Sonntag: ", "").strip()
                 # print(f"[DEBUG] Vergleiche Excel '{cleaned_service_entry}' mit Laufzettel '{dienstname}'")
                 if cleaned_service_entry.lower() in dienstname.lower():
-                    # print(f"[DEBUG] {dienstname} gefunden.")
+                    # print(f"[DEBUG] {dienstname} gefunden. Dienstzeit: {info['dienstzeit']}")
                     # DIENSTZEIT ist im HHMM-HHMM Format
                     # print(f"[DEBUG] Dienstzeit: {info['dienstzeit']}")
                     html_time_match = re.match(
@@ -422,7 +422,8 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
             print(f"[ERROR] Fehler beim Speichern oder Löschen des Events: {full_title}, {e}")
 
 
-def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we, countnightshifts, nextlaufzettel, current_laufzettel):
+def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we, countnightshifts):
+    global nextlaufzettel, current_laufzettel  # Zugriff auf die globalen Variablen
     df = pd.read_excel(file_path, header=None, engine='openpyxl')
     # print(f"[DEBUG] Verfügbare Namen: {df[0].unique()}")
     identifier_row = df[df[0].str.contains("I", na=False)].iloc[0]
@@ -459,10 +460,7 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
                                                     'Laufzettel_' + nextlaufzettel.strftime('%Y%m%d') + '.html')
                         laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info(html_file_path)
                         current_laufzettel = nextlaufzettel
-                        next_date = getnextlaufzettel(nextlaufzettel)
-                        if next_date and next_date != nextlaufzettel:
-                            nextlaufzettel = next_date
-                            # print(f"[DEBUG] Nächster Laufzettel wird sein: {nextlaufzettel.strftime('%d.%m.%Y')}")
+                        getnextlaufzettel()
 
                     existing_events = calendar.date_search(start_datetime, start_datetime + pd.Timedelta(days=1))
                     # print(f"[DEBUG] Prüfe {start_datetime.strftime('%d.%m.%Y')} auf Termine.")
@@ -514,13 +512,7 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
                                             'Laufzettel_' + nextlaufzettel.strftime('%Y%m%d') + '.html')
                 laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info(html_file_path)
                 current_laufzettel = nextlaufzettel
-                next_date = getnextlaufzettel(nextlaufzettel)
-                if next_date and next_date != nextlaufzettel:
-                    nextlaufzettel = next_date
-                    # print(f"[DEBUG] Nächster Laufzettel wird sein: {nextlaufzettel.strftime('%d.%m.%Y')}")
-                else:
-                    # print(f"[INFO] Kein weiterer Laufzettel nach {current_laufzettel.strftime('%d.%m.%Y')} verfügbar")
-                    nextlaufzettel = None
+                getnextlaufzettel()
 
         # Überprüfung, ob die Zelle leer oder NaN ist
         if pd.isna(service_entry) or not isinstance(service_entry, str):
@@ -552,10 +544,8 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
                 html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
                                             'Laufzettel_' + nextlaufzettel.strftime('%Y%m%d') + '.html')
                 laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info(html_file_path)
-                next_date = getnextlaufzettel(nextlaufzettel)
-                if next_date and next_date != nextlaufzettel:  # Prüfe ob ein neues Datum gefunden wurde
-                    nextlaufzettel = next_date
-                    # print(f"[DEBUG] Nächster Laufzettel wird sein: {nextlaufzettel.strftime('%d.%m.%Y')}")
+                getnextlaufzettel()
+                # print(f"[DEBUG] Nächster Laufzettel wird sein: {nextlaufzettel.strftime('%d.%m.%Y')}")
 
         # Abfrage zur Unterscheidung zwischen ganztägigen und zeitgebundenen Terminen
         if re.search(r'\b\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\b', service_entry):
@@ -566,17 +556,16 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
             )
         else:
             process_all_day_event(service_entry, start_date)
-    return nextlaufzettel, current_laufzettel
+    return
 
 def initialize_laufzettel():
+    global nextlaufzettel, current_laufzettel  # Zugriff auf die globalen Variablen
     html_files = [f for f in os.listdir(folder_path) if re.match(r'Laufzettel_\d{8}\.html', f)]
     if not html_files:
         print("[ERROR] Keine Laufzettel-Dateien im Verzeichnis gefunden")
         return None, None, None
     
     html_files.sort()
-    current_laufzettel = None
-    nextlaufzettel = None
     today = date.today()
     
     # print(f"[DEBUG] Mehrere HTML-Dateien gefunden: {html_files}")
@@ -609,11 +598,12 @@ def initialize_laufzettel():
         # if nextlaufzettel:
             # print(f"[DEBUG] Nächster Laufzettel ab: {nextlaufzettel.strftime('%d.%m.%Y')}")
         laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info(html_file_path)
-        return current_laufzettel, nextlaufzettel, (laufzettel_werktags, laufzettel_we)
-    return None, None, None
+        return laufzettel_werktags, laufzettel_we
+    return None, None
 
 
-def getnextlaufzettel(nextlaufzettel):
+def getnextlaufzettel():
+    global nextlaufzettel  # Zugriff auf die globale Variable
     """Bestimmt den chronologisch nächsten verfügbaren Laufzettel."""
     if nextlaufzettel is None:
         print("[WARNING] Eingabe-Laufzettel ist None")
@@ -643,9 +633,9 @@ def getnextlaufzettel(nextlaufzettel):
     # Finde den nächsten Laufzettel nach dem aktuellen
     valid_next = [d for d in laufzettel_dates if d.date() > nextlaufzettel.date()]
     if valid_next:
-        next_date = min(valid_next)
+        nextlaufzettel = min(valid_next)
         # print(f"[DEBUG] Gefunden: Nächster Laufzettel ab {next_date.strftime('%d.%m.%Y')}")
-        return next_date
+        return nextlaufzettel
     
     # print(f"[DEBUG] Kein weiterer Laufzettel nach {nextlaufzettel.strftime('%d.%m.%Y')} gefunden")
     return None
@@ -756,6 +746,9 @@ config_path = os.path.join(folder_path, 'config.json')
 night_shifts_count = 0
 countnightshifts = False  # Initialisierung vor der Verarbeitung
 changedlaufzettel = False
+# Globale Variablen für Laufzettel
+nextlaufzettel = None
+current_laufzettel = None
 
 parser = argparse.ArgumentParser(description="Dienst zu ARD ZDF Box Script.")
 parser.add_argument("user_name", help="Name des Benutzers", type=str)
@@ -847,12 +840,8 @@ end_timer("caldav", "Verbindung zu CalDAV")
 
 eingetragene_termine = []
 target_folder = os.path.join(folder_path, "Plaene", "MAZ_TAZ Dienstplan")
-current_laufzettel, nextlaufzettel, laufzettel_data = initialize_laufzettel()
-if not current_laufzettel:
-    print("[ERROR] Kein gültiger Laufzettel gefunden")
-    sys.exit(1)
+laufzettel_werktags, laufzettel_we = initialize_laufzettel()
 
-laufzettel_werktags, laufzettel_we = laufzettel_data
 end_timer("initial", "Initialisierung")
 # print(f"[DEBUG] Absoluter Pfad zum Skript: {script_path}")
 # print(f"[DEBUG] Absoluter Pfad zum Zielordner: {target_folder}")
@@ -876,8 +865,8 @@ if xlsx_files:
         file_name = os.path.basename(file_path)
         # start_timer("xlsx")
         # print(f"[DEBUG] Verarbeite Datei: {file_name}")
-        nextlaufzettel, current_laufzettel = process_excel_file(
-            file_path, user_name, laufzettel_werktags, laufzettel_we, countnightshifts, nextlaufzettel, current_laufzettel
+        process_excel_file(
+            file_path, user_name, laufzettel_werktags, laufzettel_we, countnightshifts
         )
         # end_timer("xlsx", f"Verarbeitung der Excel-Datei {file_name}")
 else:
