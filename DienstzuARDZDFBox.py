@@ -52,6 +52,18 @@ def is_holiday_or_weekend(datum):
     return False, None
 
 
+def parse_html_for_workplace_info_with_cache(html_file_path):
+    global laufzettel_cache
+    if html_file_path in laufzettel_cache:
+        return laufzettel_cache[html_file_path]
+    
+    # Wenn nicht im Cache, parse die Datei und speichere das Ergebnis
+    laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info(html_file_path)
+    laufzettel_cache[html_file_path] = (laufzettel_werktags, laufzettel_we)
+    # print(f"[DEBUG] Laufzettel-Cache aktualisiert für {html_file_path}")
+    return laufzettel_werktags, laufzettel_we
+
+
 def parse_html_for_workplace_info(html_file_path):  # Function to parse HTML and extract workplace, breaks, and tasks
     # start_timer("html")
     def extract_info(table):
@@ -68,6 +80,8 @@ def parse_html_for_workplace_info(html_file_path):  # Function to parse HTML and
                         'pausenzeit': cols[3].text.replace('\u00A0', ' ').strip(),
                         'task': cols[4].text.replace('\u00A0', ' ').strip()
                     })
+                    if len(info) > 40:
+                        break
         return info
 
     # HTML parsen
@@ -459,7 +473,7 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
                         # print(f"[INFO] Wechsel zu Laufzettel ab {nextlaufzettel.strftime('%d.%m.%Y')}")
                         html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
                                                     'Laufzettel_' + nextlaufzettel.strftime('%Y%m%d') + '.html')
-                        laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info(html_file_path)
+                        laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info_with_cache(html_file_path)
                         current_laufzettel = nextlaufzettel
                         getnextlaufzettel()
 
@@ -511,7 +525,7 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
                 # print(f"[INFO] Wechsel zu Laufzettel ab {nextlaufzettel.strftime('%d.%m.%Y')}")
                 html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
                                             'Laufzettel_' + nextlaufzettel.strftime('%Y%m%d') + '.html')
-                laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info(html_file_path)
+                laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info_with_cache(html_file_path)
                 current_laufzettel = nextlaufzettel
                 getnextlaufzettel()
 
@@ -544,7 +558,7 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
                 # print(f"[INFO] Wechsel zu Laufzettel ab {nextlaufzettel.strftime('%d.%m.%Y')}")
                 html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
                                             'Laufzettel_' + nextlaufzettel.strftime('%Y%m%d') + '.html')
-                laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info(html_file_path)
+                laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info_with_cache(html_file_path)
                 getnextlaufzettel()
                 # print(f"[DEBUG] Nächster Laufzettel wird sein: {nextlaufzettel.strftime('%d.%m.%Y')}")
 
@@ -559,20 +573,27 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
             process_all_day_event(service_entry, start_date)
     return
 
-def initialize_laufzettel():
-    global nextlaufzettel, current_laufzettel  # Zugriff auf die globalen Variablen
+
+def load_all_laufzettel(folder_path):
+    global laufzettel_data  # Zugriff auf die globale Variable
     html_files = [f for f in os.listdir(folder_path) if re.match(r'Laufzettel_\d{8}\.html', f)]
-    if not html_files:
-        print("[ERROR] Keine Laufzettel-Dateien im Verzeichnis gefunden")
-        return None, None, None
-    
     html_files.sort()
+    laufzettel_data = {}
+    for html_file in html_files:
+        file_path = os.path.join(folder_path, html_file)
+        with open(file_path, 'r', encoding='utf-8') as file:
+            laufzettel_data[html_file] = file.read()
+    return
+
+
+def initialize_laufzettel():
+    global nextlaufzettel, current_laufzettel, laufzettel_data  # Zugriff auf die globalen Variablen
     today = date.today()
     
     # print(f"[DEBUG] Mehrere HTML-Dateien gefunden: {html_files}")
     # Sammle alle Laufzettel-Daten
     laufzettel_dates = []
-    for html_file in html_files:
+    for html_file in laufzettel_data:
         try:
             laufzettel_datum = datetime.datetime.strptime(
                 re.search(r'Laufzettel_(\d{8})\.html', html_file).group(1),
@@ -598,26 +619,21 @@ def initialize_laufzettel():
         # print(f"[DEBUG] Aktueller Laufzettel: {current_laufzettel.strftime('%d.%m.%Y')}")
         # if nextlaufzettel:
         #     print(f"[DEBUG] Nächster Laufzettel ab: {nextlaufzettel.strftime('%d.%m.%Y')}")
-        laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info(html_file_path)
+        laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info_with_cache(html_file_path)
         return laufzettel_werktags, laufzettel_we
     return None, None
 
 
 def getnextlaufzettel():
-    global nextlaufzettel  # Zugriff auf die globale Variable
+    global nextlaufzettel, laufzettel_data  # Zugriff auf die globale Variable
     """Bestimmt den chronologisch nächsten verfügbaren Laufzettel."""
     if nextlaufzettel is None:
         print("[WARNING] Eingabe-Laufzettel ist None")
         return None
 
-    html_files = [f for f in os.listdir(folder_path) if re.match(r'Laufzettel_\d{8}\.html', f)]
-    if not html_files:
-        print("[WARNING] Keine Laufzettel-Dateien gefunden")
-        return None
-
     # Sammle alle Laufzettel-Daten
     laufzettel_dates = []
-    for html_file in html_files:
+    for html_file in laufzettel_data:
         try:
             laufzettel_datum = datetime.datetime.strptime(
                 re.search(r'Laufzettel_(\d{8})\.html', html_file).group(1), 
@@ -747,6 +763,8 @@ config_path = os.path.join(folder_path, 'config.json')
 night_shifts_count = 0
 countnightshifts = False  # Initialisierung vor der Verarbeitung
 changedlaufzettel = False
+laufzettel_cache = {}
+laufzettel_data = {}
 # Globale Variablen für Laufzettel
 nextlaufzettel = None
 current_laufzettel = None
@@ -841,6 +859,7 @@ end_timer("caldav", "Verbindung zu CalDAV")
 
 eingetragene_termine = []
 target_folder = os.path.join(folder_path, "Plaene", "MAZ_TAZ Dienstplan")
+load_all_laufzettel(folder_path)
 laufzettel_werktags, laufzettel_we = initialize_laufzettel()
 
 end_timer("initial", "Initialisierung")
