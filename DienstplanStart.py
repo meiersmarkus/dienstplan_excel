@@ -6,8 +6,10 @@ import argparse
 import logging
 from logging.handlers import RotatingFileHandler
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
+import holidays
+from dateutil.easter import easter
 
 # Logging-Konfiguration
 log_formatter = logging.Formatter('%(message)s')
@@ -46,6 +48,12 @@ def end_timer(timer_name, task_description):
     else:
         logger.error(f"[ERROR] Kein aktiver Timer mit dem Namen: {timer_name}")
 
+def is_holiday_or_weekend(datum):
+    if datum in de_holidays:
+        return True, de_holidays.get(datum)
+    if datum.weekday() >= 5:
+        return True, "Samstag" if datum.weekday() == 5 else "Sonntag"
+    return False, None
 
 # Überprüfung und Installation fehlender Pakete
 parser = argparse.ArgumentParser(description="Dienst zu ARD ZDF Box Script.")
@@ -56,6 +64,23 @@ args = parser.parse_args()
 force = args.force
 nodownload = args.nodownload
 delete = args.delete
+
+current_year = datetime.today().year
+years = [current_year - 1, current_year, current_year + 1]
+de_holidays = holidays.Germany(years=years, observed=False, prov="HH", language="de")
+for year in years:
+    de_holidays[datetime(year, 10, 31)] = "Reformationstag"  # Reformationstag
+    de_holidays[datetime(year, 12, 24)] = "Heiligabend"  # Heiligabend
+    de_holidays[datetime(year, 12, 31)] = "Silvester"    # Silvester
+    de_holidays[easter(year)] = "Ostersonntag"       # Ostersonntag
+    de_holidays[easter(year) + timedelta(days=49)] = "Pfingstsonntag"  # Pfingstsonntag
+# for holiday_date, holiday_name in de_holidays.items():
+#    print(f"{holiday_date.strftime('%d.%m.%Y')}: {holiday_name}")
+
+feiertag, holiday_name = is_holiday_or_weekend(datetime.today())
+if feiertag and time.localtime().tm_hour > 8:
+    print(f"[INFO] {datetime.today.strftime('%d.%m.%Y')} ist {holiday_name}. Skript wird nicht ausgeführt.")
+    sys.exit(0)
 
 def run_download_script():
     """Führt das Download-Skript aus und gibt den Rückgabewert zurück."""

@@ -92,6 +92,18 @@ def is_holiday_or_weekend(datum):
     return False, None
 
 
+def parse_html_for_workplace_info_with_cache(html_file_path):
+    global laufzettel_cache
+    if html_file_path in laufzettel_cache:
+        return laufzettel_cache[html_file_path]
+    
+    # Wenn nicht im Cache, parse die Datei und speichere das Ergebnis
+    laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info(html_file_path)
+    laufzettel_cache[html_file_path] = (laufzettel_werktags, laufzettel_we)
+    # print(f"[DEBUG] Laufzettel-Cache aktualisiert für {html_file_path}")
+    return laufzettel_werktags, laufzettel_we
+
+
 def parse_html_for_workplace_info(html_file_path):  # Function to parse HTML and extract workplace, breaks, and tasks
     # start_timer("html")
     def extract_info(table):
@@ -108,21 +120,24 @@ def parse_html_for_workplace_info(html_file_path):  # Function to parse HTML and
                         'pausenzeit': cols[3].text.replace('\u00A0', ' ').strip(),
                         'task': cols[4].text.replace('\u00A0', ' ').strip()
                     })
+                    if len(info) > 40:
+                        break
         return info
 
     # HTML parsen
     with open(html_file_path, 'r', encoding='utf-8') as file:
         soup = BeautifulSoup(file, 'html.parser')
 
+    # Werktags- und Wochenend-Bereich extrahieren
     werktags_table = soup.find('table', summary='Laufzettel ab 01.01.23 Werktags')
     wochenende_table = soup.find('table', summary='Laufzettel ab 01.01.23 Wochenende')
 
-    if not werktags_table:
-        print("[DEBUG] Werktags-Tabelle nicht gefunden.")
-    if not wochenende_table:
-        print("[DEBUG] Wochenend-Tabelle nicht gefunden.")
+    laufzettel_werktags = extract_info(werktags_table) if werktags_table else []
+    laufzettel_we = extract_info(wochenende_table) if wochenende_table else []
 
-    return extract_info(werktags_table), extract_info(wochenende_table)
+    # Rückgabe der getrennten Listen
+    # end_timer("html", "HTML auslesen")
+    return laufzettel_werktags, laufzettel_we
 
 
 def create_ical_event(full_title, start_datetime, end_datetime, description):
@@ -235,7 +250,7 @@ def process_timed_event(service_entry, date, name_without_brackets, laufzettel_w
                 full_title = f"{name_without_brackets}, {service_entry[time_match.end():].strip()}"
 
             workplace = None
-            is_holiday_flag, holiday_name = is_holiday_or_weekend(date)  # Tuple auspacken
+            is_holiday_flag, holiday_name = is_holiday_or_weekend(date)
             workplace_info = laufzettel_we if is_holiday_flag else laufzettel_werktags
             # print(f"[DEBUG] {workplace_info}")
             cleaned_service_entry = re.sub(r'\s*\(WT\)|\s*Info ', '', service_entry[time_match.end():].strip())
@@ -259,7 +274,7 @@ def process_timed_event(service_entry, date, name_without_brackets, laufzettel_w
                             workplace = info.get('arbeitsplatz', None)
                             # print(f"[DEBUG] {cleaned_service_entry}, {workplace}")
                             break
-            print(f"[DEBUG] Datum: {start_datetime.date()}, Dienst: {title}, Workplace: {workplace}")
+            # print(f"[DEBUG] Datum: {start_datetime.date()}, Dienst: {title}, Workplace: {workplace}")
 
             # logger.debug(f"[DEBUG] Excel: '{full_title.strip()}' am '{start_datetime.date()}'.")
             # Now check if the event with the full title already exists
@@ -314,6 +329,8 @@ def process_timed_event(service_entry, date, name_without_brackets, laufzettel_w
                 description = f"Dienst: {title} von {name_without_brackets}, "
                 if workplace:
                     description += f"Platz: {workplace}, "
+                else:
+                    description += "Platz: none, "
                 last_modified = datetime.datetime.now().strftime('%d.%m.%Y, %H:%M')
                 description += "Alle Angaben und Inhalte sind ohne Gewähr. "
                 description += f"Änderungsdatum: {last_modified}"
@@ -332,7 +349,8 @@ def process_timed_event(service_entry, date, name_without_brackets, laufzettel_w
         # Cancel the alarm if the script finishes before the timeout
         signal.alarm(0)
 
-def process_excel_file(file_path, heute, schichten, laufzettel_werktags, laufzettel_we, nextlaufzettel):
+def process_excel_file(file_path, heute, schichten, laufzettel_werktags, laufzettel_we):
+    global nextlaufzettel, current_laufzettel  # Zugriff auf die globalen Variablen
     df = pd.read_excel(file_path, header=None, engine='openpyxl')
     # Finde die erste Zeile, die Datumsangaben enthält (z. B. mit einem "I" in Spalte 0)
     identifier_row_index = df[df[0].astype(str).str.contains("I", na=False)].index[0]
@@ -391,32 +409,36 @@ def process_excel_file(file_path, heute, schichten, laufzettel_werktags, laufzet
                         print(f"[INFO] Wechsel zu Laufzettel ab {nextlaufzettel.strftime('%d.%m.%Y')}")
                         html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
                                                     'Laufzettel_' + nextlaufzettel.strftime('%Y%m%d') + '.html')
-                        laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info(html_file_path)
-                        next_date = getnextlaufzettel(nextlaufzettel)
-                        if next_date and next_date != nextlaufzettel:  # Prüfe ob ein neues Datum gefunden wurde
-                            nextlaufzettel = next_date
-                            # print(f"[DEBUG] Nächster Laufzettel wird sein: {nextlaufzettel.strftime('%d.%m.%Y')}")
+                        laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info_with_cache(html_file_path)
+                        current_laufzettel = nextlaufzettel
+                        getnextlaufzettel()
 
                 if re.search(r'\b\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\b', service_entry):
                     # logger.debug(f"[DEBUG] '{service_entry}' ist ein zeitgebundenes Event.")
                     process_timed_event(service_entry, date, name_without_brackets, laufzettel_werktags, laufzettel_we)
-    return nextlaufzettel, laufzettel_werktags, laufzettel_we
+    return
+
+
+def load_all_laufzettel(folder_path):
+    global laufzettel_data  # Zugriff auf die globale Variable
+    html_files = [f for f in os.listdir(folder_path) if re.match(r'Laufzettel_\d{8}\.html', f)]
+    html_files.sort()
+    laufzettel_data = {}
+    for html_file in html_files:
+        file_path = os.path.join(folder_path, html_file)
+        with open(file_path, 'r', encoding='utf-8') as file:
+            laufzettel_data[html_file] = file.read()
+    return
+
 
 def initialize_laufzettel():
-    html_files = [f for f in os.listdir(folder_path) if re.match(r'Laufzettel_\d{8}\.html', f)]
-    if not html_files:
-        print("[ERROR] Keine Laufzettel-Dateien im Verzeichnis gefunden")
-        return None, None, None
-    
-    html_files.sort()
-    current_laufzettel = None
-    nextlaufzettel = None
+    global nextlaufzettel, current_laufzettel, laufzettel_data  # Zugriff auf die globalen Variablen
     today = date.today()
     
     # print(f"[DEBUG] Mehrere HTML-Dateien gefunden: {html_files}")
     # Sammle alle Laufzettel-Daten
     laufzettel_dates = []
-    for html_file in html_files:
+    for html_file in laufzettel_data:
         try:
             laufzettel_datum = datetime.datetime.strptime(
                 re.search(r'Laufzettel_(\d{8})\.html', html_file).group(1),
@@ -427,8 +449,8 @@ def initialize_laufzettel():
             print(f"[ERROR] Fehler beim Parsen des Datums aus {html_file}: {e}")
             continue
     
-    # Finde den aktuellen Laufzettel (letzter vor oder gleich heute)
-    valid_current = [d for d in laufzettel_dates if d.date() <= today]
+    # Finde den aktuellen Laufzettel (letzter vor oder gleich vor einer Woche)
+    valid_current = [d for d in laufzettel_dates if d.date() <= today - datetime.timedelta(days=8)]
     if valid_current:
         current_laufzettel = max(valid_current)
         
@@ -439,28 +461,24 @@ def initialize_laufzettel():
     
     if current_laufzettel:
         html_file_path = os.path.join(folder_path, f'Laufzettel_{current_laufzettel.strftime("%Y%m%d")}.html')
-        print(f"[DEBUG] Aktueller Laufzettel: {current_laufzettel.strftime('%d.%m.%Y')}")
-        if nextlaufzettel:
-            print(f"[DEBUG] Nächster Laufzettel ab: {nextlaufzettel.strftime('%d.%m.%Y')}")
-        laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info(html_file_path)
-        return current_laufzettel, nextlaufzettel, laufzettel_werktags, laufzettel_we
-    return None, None, None
+        # print(f"[DEBUG] Aktueller Laufzettel: {current_laufzettel.strftime('%d.%m.%Y')}")
+        # if nextlaufzettel:
+        #     print(f"[DEBUG] Nächster Laufzettel ab: {nextlaufzettel.strftime('%d.%m.%Y')}")
+        laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info_with_cache(html_file_path)
+        return laufzettel_werktags, laufzettel_we
+    return None, None
 
 
-def getnextlaufzettel(nextlaufzettel):
+def getnextlaufzettel():
+    global nextlaufzettel, laufzettel_data  # Zugriff auf die globale Variable
     """Bestimmt den chronologisch nächsten verfügbaren Laufzettel."""
     if nextlaufzettel is None:
         print("[WARNING] Eingabe-Laufzettel ist None")
         return None
 
-    html_files = [f for f in os.listdir(folder_path) if re.match(r'Laufzettel_\d{8}\.html', f)]
-    if not html_files:
-        print("[WARNING] Keine Laufzettel-Dateien gefunden")
-        return None
-
     # Sammle alle Laufzettel-Daten
     laufzettel_dates = []
-    for html_file in html_files:
+    for html_file in laufzettel_data:
         try:
             laufzettel_datum = datetime.datetime.strptime(
                 re.search(r'Laufzettel_(\d{8})\.html', html_file).group(1), 
@@ -477,9 +495,9 @@ def getnextlaufzettel(nextlaufzettel):
     # Finde den nächsten Laufzettel nach dem aktuellen
     valid_next = [d for d in laufzettel_dates if d.date() > nextlaufzettel.date()]
     if valid_next:
-        next_date = min(valid_next)
+        nextlaufzettel = min(valid_next)
         # print(f"[DEBUG] Gefunden: Nächster Laufzettel ab {next_date.strftime('%d.%m.%Y')}")
-        return next_date
+        return nextlaufzettel
     
     # print(f"[DEBUG] Kein weiterer Laufzettel nach {nextlaufzettel.strftime('%d.%m.%Y')} gefunden")
     return None
@@ -541,6 +559,11 @@ folder_path = os.path.dirname(script_path)
 # logger.debug(f"[DEBUG] folder_path: {folder_path}")
 config_path = os.path.join(folder_path, 'config.json')
 # logger.debug(f"[DEBUG] Config: {config_path}")
+laufzettel_cache = {}
+laufzettel_data = {}
+# Globale Variablen für Laufzettel
+nextlaufzettel = None
+current_laufzettel = None
 
 parser = argparse.ArgumentParser(description="Dienst zu Gruppenkalender VPA")
 parser.add_argument("-r", "--rewrite", help="Alle vorhandenen Termine im Zeitbereich neu erstellen", action="store_true")
@@ -569,6 +592,11 @@ for year in years:
 # logger.debug(f"[DEBUG] Kalendername: {calendar_name}")
 # logger.debug(f"[DEBUG] Kalender-URL: {caldav_url}")
 
+feiertag, holiday_name = is_holiday_or_weekend(date.today())
+if feiertag and time.localtime().tm_hour > 2:
+    print(f"[INFO] {date.today.strftime('%d.%m.%Y')} ist {holiday_name}. Skript wird nicht ausgeführt.")
+    sys.exit(0)
+
 start_timer("caldav")
 try:
     # logger.debug(f"[DEBUG] Verbinde mit CalDAV-Server '{service_name}'...")
@@ -592,10 +620,8 @@ except Exception as e:
 end_timer("caldav", "Verbindung zu CalDAV")
 eingetragene_termine = []
 target_folder = os.path.join(folder_path, "Plaene", "MAZ_TAZ Dienstplan")
-current_laufzettel, nextlaufzettel, laufzettel_werktags, laufzettel_we = initialize_laufzettel()
-if not current_laufzettel:
-    print("[ERROR] Kein gültiger Laufzettel gefunden")
-    sys.exit(1)
+load_all_laufzettel(folder_path)
+laufzettel_werktags, laufzettel_we = initialize_laufzettel()
 
 end_timer("initial", "Initialisierung")
 
@@ -607,7 +633,7 @@ xlsx_files = [
 heute = date.today()
 
 # Lösche alle Termine, die ein früheres Datum haben als gestern
-start_date = heute - timedelta(days=7)
+start_date = heute - timedelta(days=4)
 end_date = heute - timedelta(days=1)
 events = calendar.date_search(start=start_date, end=end_date)
 for event in events:
@@ -636,7 +662,7 @@ if xlsx_files:
     for file_path in xlsx_files:
         file_name = os.path.basename(file_path)
         # logger.info(f"[INFO] Verarbeite Datei: {file_name}")
-        nextlaufzettel, laufzettel_werktags, laufzettel_we = process_excel_file(file_path, heute, schichten, laufzettel_werktags, laufzettel_we, nextlaufzettel)
+        process_excel_file(file_path, heute, schichten, laufzettel_werktags, laufzettel_we)
 else:
     logger.debug("[DEBUG] Keine .xlsx-Dateien gefunden.")
 
