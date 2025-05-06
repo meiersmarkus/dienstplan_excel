@@ -79,7 +79,7 @@ for year in years:
 
 feiertag, holiday_name = is_holiday_or_weekend(datetime.today())
 if feiertag and time.localtime().tm_hour > 8:
-    print(f"[INFO] {datetime.today.strftime('%d.%m.%Y')} ist {holiday_name}. Skript wird nicht ausgeführt.")
+    print(f"[INFO] {datetime.today().strftime('%d.%m.%Y')} ist {holiday_name}. Skript wird nicht ausgeführt.")
     sys.exit(0)
 
 def run_download_script():

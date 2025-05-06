@@ -417,6 +417,8 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
                     description += f"Pause: {break_time}, "
                 if task:
                     description += f"Aufgabe: {task}. "
+                if not workplace:
+                    print(f"[DEBUG] Keinen Platz für '{title}' am {start_datetime.strftime('%a, %d.%m.%Y')}")
 
                 # Add the current modification date
                 last_modified = datetime.datetime.now().strftime('%d.%m.%Y, %H:%M')
@@ -605,7 +607,7 @@ def initialize_laufzettel():
             continue
     
     # Finde den aktuellen Laufzettel (letzter vor oder gleich vor einer Woche)
-    valid_current = [d for d in laufzettel_dates if d.date() <= today - datetime.timedelta(days=8)]
+    valid_current = [d for d in laufzettel_dates if d.date() <= today - datetime.timedelta(days=15)]
     if valid_current:
         current_laufzettel = max(valid_current)
         

@@ -450,7 +450,7 @@ def initialize_laufzettel():
             continue
     
     # Finde den aktuellen Laufzettel (letzter vor oder gleich vor einer Woche)
-    valid_current = [d for d in laufzettel_dates if d.date() <= today - datetime.timedelta(days=8)]
+    valid_current = [d for d in laufzettel_dates if d.date() <= today - datetime.timedelta(days=15)]
     if valid_current:
         current_laufzettel = max(valid_current)
         
@@ -594,7 +594,7 @@ for year in years:
 
 feiertag, holiday_name = is_holiday_or_weekend(date.today())
 if feiertag and time.localtime().tm_hour > 2:
-    print(f"[INFO] {date.today.strftime('%d.%m.%Y')} ist {holiday_name}. Skript wird nicht ausgeführt.")
+    print(f"[INFO] {date.today().strftime('%d.%m.%Y')} ist {holiday_name}. Skript wird nicht ausgeführt.")
     sys.exit(0)
 
 start_timer("caldav")
