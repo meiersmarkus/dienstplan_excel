@@ -11,9 +11,12 @@ import json
 import holidays
 from dateutil.easter import easter
 
+# Basisverzeichnis des Skripts
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Logging-Konfiguration
 log_formatter = logging.Formatter('%(message)s')
-log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Dienstplanscript.log")
+log_file = os.path.join(BASE_DIR, "Dienstplanscript.log")
 log_handler = RotatingFileHandler(log_file, maxBytes=1024 * 1024, backupCount=3)
 log_handler.setFormatter(log_formatter)
 log_handler.setLevel(logging.DEBUG)
@@ -86,7 +89,7 @@ def run_download_script():
     """Führt das Download-Skript aus und gibt den Rückgabewert zurück."""
     try:
         result = subprocess.run(
-            ["python", "/volume1/CloudSync/ARD-ZDF-Box/ADienstplanCaldav/DienstplanDownload.py"],
+            ["python", os.path.join(BASE_DIR, "DienstplanDownload.py")],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=300  # Timeout von 5 Minuten
@@ -108,7 +111,7 @@ def update_calendar(name, args):
     """Aktualisiert den Kalender für einen einzelnen Kollegen."""
     try:
         result = subprocess.run(
-            ["python", "/volume1/CloudSync/ARD-ZDF-Box/ADienstplanCaldav/DienstzuARDZDFBox.py", name] + args,
+            ["python", os.path.join(BASE_DIR, "DienstzuARDZDFBox.py"), name] + args,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=300  # Timeout von 5 Minuten
@@ -143,10 +146,10 @@ def load_colleagues_from_config(config_path):
 
 def update_calendars():
     """Startet die Kalenderaktualisierungen für alle Kollegen parallel."""
-    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'colleagues.json')
+    config_path = os.path.join(BASE_DIR, 'colleagues.json')
     colleagues = load_colleagues_from_config(config_path)
 
-    with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(update_calendar, name, args) for name, args in colleagues]
         for future in as_completed(futures):
             try:
@@ -170,9 +173,9 @@ def get_latest_modification_date(folder_path):
 
 def deleteoldentries():
     """Löscht alte Einträge für alle Kollegen."""
-    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'colleagues.json')
+    config_path = os.path.join(BASE_DIR, 'colleagues.json')
+    whitelist_path = os.path.join(BASE_DIR, 'deletewhitelist.json')
     colleagues = load_colleagues_from_config(config_path)
-    whitelist_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'deletewhitelist.json')
     whitelist = load_colleagues_from_config(whitelist_path)
 
     # Erstellen einer Liste der Namen in der Whitelist
@@ -196,7 +199,7 @@ def delete_events(name, args):
     """Löscht alte Enträge für einen einzelnen Kollegen."""
     try:
         result = subprocess.run(
-            ["python", "/volume1/CloudSync/ARD-ZDF-Box/ADienstplanCaldav/Diensteloeschen.py", name] + args,
+            ["python", os.path.join(BASE_DIR, "Diensteloeschen.py"), name] + args,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=300  # Timeout von 5 Minuten
@@ -219,13 +222,11 @@ def delete_events(name, args):
 
 
 def main():
-    script_path = os.path.abspath(__file__)
-    folder_path = os.path.dirname(script_path)
     if delete:
         logger.debug("[DEBUG] Lösche alte Einträge...")
         deleteoldentries()
         return
-    original_latest_date = get_latest_modification_date(folder_path)
+    original_latest_date = get_latest_modification_date(BASE_DIR)
     if nodownload:
         logger.debug("[DEBUG] Direkter Start ohne Download...")
         update_calendars()
