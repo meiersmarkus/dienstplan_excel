@@ -25,7 +25,6 @@ Dieses Projekt automatisiert den Prozess des Herunterladens und Aktualisierens v
 - `-o`, `--ort`: Ort als Adresse hinzufügen.
 - `-r`, `--rewrite`: Alle vorhandenen Termine im Zeitbereich neu erstellen.
 - `-n`, `--notify`: E-Mail mit eingetragenen Diensten an Benutzer senden.
-- `-s`, `--nas`: Direkt aufs NAS.
 - `-d`, `--dienste`: Nur Dienste eintragen.
 
 ### Beispiel
