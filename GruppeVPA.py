@@ -19,9 +19,12 @@ from bs4 import BeautifulSoup
 import holidays
 from dateutil.easter import easter
 
+# Basisverzeichnis des Skripts
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Logging-Konfiguration
 log_formatter = logging.Formatter('%(message)s')
-log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "DienstplanscriptGruppe.log")
+log_file = os.path.join(BASE_DIR, "DienstplanscriptGruppe.log")
 log_handler = RotatingFileHandler(log_file, maxBytes=1024 * 1024, backupCount=3)
 log_handler.setFormatter(log_formatter)
 log_handler.setLevel(logging.DEBUG)
@@ -254,6 +257,8 @@ def process_timed_event(service_entry, date, name_without_brackets, laufzettel_w
             workplace_info = laufzettel_we if is_holiday_flag else laufzettel_werktags
             # print(f"[DEBUG] {workplace_info}")
             cleaned_service_entry = re.sub(r'\s*\(WT\)|\s*Info ', '', service_entry[time_match.end():].strip())
+            if cleaned_service_entry == "Ingest 1": workplace = "ING1"
+            if cleaned_service_entry == "Ingest 2": workplace = "ING2"
             for info in workplace_info:
                 dienstname = info['dienstname'].replace("Samstag: ", "").replace("Sonntag: ", "").strip()
                 # print(f"[DEBUG] Vergleiche Excel '{cleaned_service_entry}' mit Laufzettel '{dienstname}'")
@@ -275,6 +280,9 @@ def process_timed_event(service_entry, date, name_without_brackets, laufzettel_w
                             # print(f"[DEBUG] {cleaned_service_entry}, {workplace}")
                             break
             # print(f"[DEBUG] Datum: {start_datetime.date()}, Dienst: {title}, Workplace: {workplace}")
+            # Wenn der Dienst "IngSchni" ist, setze den Arbeitsplatz auf das, was bei workplace nach dem letzten Leerzeichen steht
+            if cleaned_service_entry == "IngSchni": workplace = workplace.split()[-1]
+            
 
             # logger.debug(f"[DEBUG] Excel: '{full_title.strip()}' am '{start_datetime.date()}'.")
             # Now check if the event with the full title already exists
@@ -362,7 +370,8 @@ def process_excel_file(file_path, heute, schichten, laufzettel_werktags, laufzet
             date = pd.to_datetime(date).date()
         except Exception:
             continue
-        if date != heute:
+        if date != heute and date != heute + timedelta(days=1):
+        # if date != heute and date != heute + timedelta(days=1) and date != heute - timedelta(days=1):
             # logger.debug(f"[DEBUG] {start_date.strftime('%a, %d.%m.%Y')} ist außerhalb des Zeitrahmens.")
             continue
         # Durchsuche die Spalte unterhalb der Datumzeile
@@ -405,7 +414,7 @@ def process_excel_file(file_path, heute, schichten, laufzettel_werktags, laufzet
                 # print(f"[DEBUG] Nächster Laufzettel: {nextlaufzettel}")
                 if nextlaufzettel is not None:
                     # Prüfe ob das aktuelle oder späteste Datum den Laufzettel-Wechsel erfordert
-                    if (date >= nextlaufzettel.date()):
+                    if (date >= nextlaufzettel.date() and nextlaufzettel.date() > current_laufzettel.date()):
                         print(f"[INFO] Wechsel zu Laufzettel ab {nextlaufzettel.strftime('%d.%m.%Y')}")
                         html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
                                                     'Laufzettel_' + nextlaufzettel.strftime('%Y%m%d') + '.html')
@@ -635,6 +644,7 @@ heute = date.today()
 # Lösche alle Termine, die ein früheres Datum haben als gestern
 start_date = heute - timedelta(days=4)
 end_date = heute - timedelta(days=1)
+# print(f"[DEBUG] Lösche alle Termine zwischen {start_date.strftime('%d.%m.%Y')} und {end_date.strftime('%d.%m.%Y')}")
 events = calendar.date_search(start=start_date, end=end_date)
 for event in events:
     vevent = event.icalendar_instance
