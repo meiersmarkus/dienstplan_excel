@@ -309,23 +309,21 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
 
         is_holiday_flag, holiday_name = is_holiday_or_weekend(start_date.date())
         workplace_info = laufzettel_we if is_holiday_flag else laufzettel_werktags
+        # print(f"[DEBUG] Verwende {'Wochenende' if is_holiday_flag else 'Werktags'}-Tabelle für {start_date.strftime('%d.%m.%Y')}")
         try:
             cleaned_service_entry = re.sub(r'\s*\(WT\)|\s*Info ', '', service_entry[time_match.end():].strip())
             for info in workplace_info:
                 dienstname = info['dienstname'].replace("Samstag: ", "").replace("Sonntag: ", "").strip()
                 # print(f"[DEBUG] Vergleiche Excel '{cleaned_service_entry}' mit Laufzettel '{dienstname}'")
-                if cleaned_service_entry.lower() in dienstname.lower():
+                if cleaned_service_entry.lower() in dienstname.lower().strip():
                     # print(f"[DEBUG] {dienstname} gefunden. Dienstzeit: {info['dienstzeit']}")
                     # DIENSTZEIT ist im HHMM-HHMM Format
                     # print(f"[DEBUG] Dienstzeit: {info['dienstzeit']}")
-                    html_time_match = re.match(
-                        r'(\d{4})\s*-\s*(\d{4})', info['dienstzeit']
-                    )
+                    html_time_match = re.match(r'(\d{4})\s*-\s*(\d{4})', info['dienstzeit'])
                     if html_time_match:
                         html_start_time = f"{html_time_match.group(1)[:2]}:{html_time_match.group(1)[2:]}"
-                        # print(f"[DEBUG] HTML Startzeit: {html_start_time}")
                         html_end_time = f"{html_time_match.group(2)[:2]}:{html_time_match.group(2)[2:]}"
-                        # print(f"[DEBUG] HTML Endzeit: {html_end_time}")
+                        # print(f"[DEBUG] HTML Startzeit: {html_start_time}, HTML Endzeit: {html_end_time}")
 
                         if html_start_time == start_time_str and html_end_time == end_time_str:
                             workplace = info.get('arbeitsplatz', None)
@@ -333,7 +331,7 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
                             task = info.get('task', None)
                             # print(f"[DEBUG] {cleaned_service_entry}, {workplace}")
                             break
-            # print(f"[DEBUG] Workplace: {workplace}, Break: {break_time}, Task: {task}")
+            # print(f"[DEBUG] Am {start_date.strftime('%d.%m.%Y')}: {title}, Workplace: {workplace}, Break: {break_time}, Task: {task}")
 
             if user_name == load_credentials("user1", config_path):
                 full_title = f"{start_time_str}-{end_time_str} {title}"
@@ -472,10 +470,16 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
                     # Prüfe Laufzettelwechsel
                     # print(f"[DEBUG] Prüfe Laufzettelwechsel für {start_datetime.date()} und {nextlaufzettel.date()}")
                     if nextlaufzettel and isinstance(nextlaufzettel, datetime.datetime) and start_datetime.date() >= nextlaufzettel.date():
+                        if current_laufzettel:
+                            old_html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
+                                                            'Laufzettel_' + current_laufzettel.strftime('%Y%m%d') + '.html')
+                            if old_html_file_path in laufzettel_cache:
+                                del laufzettel_cache[old_html_file_path]
                         # print(f"[INFO] Wechsel zu Laufzettel ab {nextlaufzettel.strftime('%d.%m.%Y')}")
                         html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
                                                     'Laufzettel_' + nextlaufzettel.strftime('%Y%m%d') + '.html')
                         laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info_with_cache(html_file_path)
+                        # print(f"[DEBUG] Cache für {html_file_path}: {laufzettel_cache[html_file_path]}")
                         current_laufzettel = nextlaufzettel
                         getnextlaufzettel()
 
@@ -517,13 +521,20 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
         date = identifier_row[day]
         service_entry = user_row[day]
         start_date = pd.to_datetime(date)
-        # print(f"[DEBUG] {start_date.strftime('%a, %d.%m.%Y')}: {service_entry}")
+        # cleaned_service_entry = service_entry.replace('\n', ' ').replace('\r', ' ').strip()
+        # print(f"[DEBUG] {start_date.strftime('%a, %d.%m.%Y')}: {cleaned_service_entry}")
         if latest_date is None or start_date.date() > latest_date:
             latest_date = start_date.date()
             # print(f"[DEBUG] Latest_date: {latest_date.strftime('%d.%m.%Y')}")
 
             # Prüfe Laufzettelwechsel basierend auf latest_date
             if nextlaufzettel and latest_date >= nextlaufzettel.date():
+                # print(f"[DEBUG] Prüfe Laufzettelwechsel für {latest_date} und {nextlaufzettel.date()}")
+                if current_laufzettel:
+                    old_html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
+                                                    'Laufzettel_' + current_laufzettel.strftime('%Y%m%d') + '.html')
+                    if old_html_file_path in laufzettel_cache:
+                        del laufzettel_cache[old_html_file_path]
                 # print(f"[INFO] Wechsel zu Laufzettel ab {nextlaufzettel.strftime('%d.%m.%Y')}")
                 html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
                                             'Laufzettel_' + nextlaufzettel.strftime('%Y%m%d') + '.html')
@@ -606,10 +617,10 @@ def initialize_laufzettel():
             print(f"[ERROR] Fehler beim Parsen des Datums aus {html_file}: {e}")
             continue
     
-    # Finde den aktuellen Laufzettel (letzter vor oder gleich vor einer Woche)
-    valid_current = [d for d in laufzettel_dates if d.date() <= today - datetime.timedelta(days=15)]
+    # Finde den aktuellen Laufzettel, indem du das erste Laufzettel-Datum suchst
+    valid_current = [d for d in laufzettel_dates if d.date() <= today]
     if valid_current:
-        current_laufzettel = max(valid_current)
+        current_laufzettel = min(valid_current)
         
         # Finde den nächsten Laufzettel (erster nach dem aktuellen)
         valid_next = [d for d in laufzettel_dates if d.date() > current_laufzettel.date()]
@@ -618,7 +629,7 @@ def initialize_laufzettel():
     
     if current_laufzettel:
         html_file_path = os.path.join(folder_path, f'Laufzettel_{current_laufzettel.strftime("%Y%m%d")}.html')
-        # print(f"[DEBUG] Aktueller Laufzettel: {current_laufzettel.strftime('%d.%m.%Y')}")
+        # print(f"[DEBUG] Erster Laufzettel: {current_laufzettel.strftime('%d.%m.%Y')}")
         # if nextlaufzettel:
         #     print(f"[DEBUG] Nächster Laufzettel ab: {nextlaufzettel.strftime('%d.%m.%Y')}")
         laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info_with_cache(html_file_path)
@@ -653,7 +664,7 @@ def getnextlaufzettel():
     valid_next = [d for d in laufzettel_dates if d.date() > nextlaufzettel.date()]
     if valid_next:
         nextlaufzettel = min(valid_next)
-        # print(f"[DEBUG] Gefunden: Nächster Laufzettel ab {next_date.strftime('%d.%m.%Y')}")
+        # print(f"[DEBUG] Nächster Laufzettel gefunden: {nextlaufzettel.strftime('%d.%m.%Y')}")
         return nextlaufzettel
     
     # print(f"[DEBUG] Kein weiterer Laufzettel nach {nextlaufzettel.strftime('%d.%m.%Y')} gefunden")
@@ -903,22 +914,26 @@ if eingetragene_termine and notify:
         wochentag = pd.to_datetime(split_term[0], format='%d.%m.%Y').strftime('%a')[:2] + '.'
         # print(f"[INFO] {wochentag} {term}")
         # Wochentag vor jedes Datum einfügen und in die Liste eingetragene_termine_wochentag schreiben
-        eingetragene_termine_wochentag += [f"{wochentag} {term}"]
+        # Wenn das Datum in der Vergangenheit liegt, dann nicht einfügen
+        if pd.to_datetime(split_term[0], format='%d.%m.%Y').date() >= datetime.date.today():
+            eingetragene_termine_wochentag += [f"{wochentag} {term}"]
     # start_timer("mail")
     # Zusammenstellung der eingetragenen Termine
-    mail_body = "Es wurden folgende Termine eingetragen:<br><br>"
-    mail_body += "<br>".join(eingetragene_termine_wochentag)
-    # Laden der E-Mail-Konfiguration
-    try:
-        email_config = load_email_config(user_name, email_config_path)
-        send_email(
-            subject=f"Dienstplan Update {user_name}",
-            body=mail_body,
-            to_email=email_config["email"],
-            kalender_id=email_config["kalender_id"]
-        )
-    except Exception as e:
-        print(f"[ERROR] Fehler bei der Benachrichtigung: {e}")
+    if eingetragene_termine_wochentag:
+        mail_body = "Es wurden folgende Termine eingetragen:<br><br>"
+        mail_body += "<br>".join(eingetragene_termine_wochentag)
+        # Laden der E-Mail-Konfiguration
+        try:
+            email_config = load_email_config(user_name, email_config_path)
+            send_email(
+                subject=f"Dienstplan Update {user_name}",
+                body=mail_body,
+                to_email=email_config["email"],
+                kalender_id=email_config["kalender_id"]
+            )
+            print(f"[INFO] Mail über {len(eingetragene_termine_wochentag)} neue Termine abgeschickt.")
+        except Exception as e:
+            print(f"[ERROR] Fehler bei der Benachrichtigung: {e}")
     # end_timer("mail", "Mail")
 elif eingetragene_termine and not notify:
     print(f"[INFO] {len(eingetragene_termine)} neue Termine eingetragen.")
