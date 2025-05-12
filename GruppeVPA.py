@@ -458,10 +458,10 @@ def initialize_laufzettel():
             print(f"[ERROR] Fehler beim Parsen des Datums aus {html_file}: {e}")
             continue
     
-    # Finde den aktuellen Laufzettel (letzter vor oder gleich vor einer Woche)
-    valid_current = [d for d in laufzettel_dates if d.date() <= today - datetime.timedelta(days=15)]
+    # Finde den aktuellen Laufzettel, indem du das erste Laufzettel-Datum suchst
+    valid_current = [d for d in laufzettel_dates if d.date() <= today]
     if valid_current:
-        current_laufzettel = max(valid_current)
+        current_laufzettel = min(valid_current)
         
         # Finde den nächsten Laufzettel (erster nach dem aktuellen)
         valid_next = [d for d in laufzettel_dates if d.date() > current_laufzettel.date()]
@@ -470,7 +470,7 @@ def initialize_laufzettel():
     
     if current_laufzettel:
         html_file_path = os.path.join(folder_path, f'Laufzettel_{current_laufzettel.strftime("%Y%m%d")}.html')
-        # print(f"[DEBUG] Aktueller Laufzettel: {current_laufzettel.strftime('%d.%m.%Y')}")
+        # print(f"[DEBUG] Erster Laufzettel: {current_laufzettel.strftime('%d.%m.%Y')}")
         # if nextlaufzettel:
         #     print(f"[DEBUG] Nächster Laufzettel ab: {nextlaufzettel.strftime('%d.%m.%Y')}")
         laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info_with_cache(html_file_path)
