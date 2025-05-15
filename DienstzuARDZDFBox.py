@@ -908,10 +908,13 @@ else:
 if eingetragene_termine and notify:
     print(f"[INFO] {len(eingetragene_termine)} neue Termine eingetragen.")
     eingetragene_termine_wochentag = []
+    deutsche_wochentage = ['Mo.', 'Di.', 'Mi.', 'Do.', 'Fr.', 'Sa.', 'So.']
     for term in eingetragene_termine:
         split_term = term.split(":")
         split_term = split_term[0].split(" ")
-        wochentag = pd.to_datetime(split_term[0], format='%d.%m.%Y').strftime('%a')[:2] + '.'
+        datum = pd.to_datetime(split_term[0], format='%d.%m.%Y')
+        wochentag = deutsche_wochentage[datum.weekday()] # 0=Montag, 6=Sonntag
+        # wochentag = pd.to_datetime(split_term[0], format='%d.%m.%Y').strftime('%a')[:2] + '.'
         # print(f"[INFO] {wochentag} {term}")
         # Wochentag vor jedes Datum einfügen und in die Liste eingetragene_termine_wochentag schreiben
         # Wenn das Datum in der Vergangenheit liegt, dann nicht einfügen
