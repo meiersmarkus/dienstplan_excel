@@ -279,6 +279,7 @@ def process_all_day_event(service_entry, start_date):  # Funktion zur Verarbeitu
 
 # Funktion zur Verarbeitung eines zeitgebundenen Events
 def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzettel_we, countnightshifts, nonightshifts):
+    global night_shifts_count
     # Extract start and end time from Excel entry
     time_match = re.match(r'(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})', service_entry)
     if time_match:
@@ -687,10 +688,32 @@ def send_email(subject, body, to_email, kalender_id):
     password = load_credentials("mailpassword", config_path)
     kalenderbase = load_credentials("kalenderbase", config_path)
     abobase = load_credentials("abobase", config_path)
+    night_shifts = None
+    if date.today().month >= 11:
+        night_shifts_count = count_night_shifts(client, calendar, date.today())
+        night_shifts_count_year = count_night_shifts(client, calendar, datetime.datetime(date.today().year, 12, 31, 23, 59))
+        if night_shifts_count > 0 or night_shifts_count_year > 0:
+            if night_shifts_count == 1:
+                night_shifts = f"Im Jahr {date.today().year} hattest du bisher {night_shifts_count} Nachtschicht."
+            elif night_shifts_count > 1:
+                night_shifts = f"Im Jahr {date.today().year} hattest du bisher {night_shifts_count} Nachtschichten."
+            else:
+                night_shifts = f"Im Jahr {date.today().year} hattest du bisher keine Nachtschichten."
+            if night_shifts_count_year - night_shifts_count > 0:
+                if night_shifts_count_year - night_shifts_count == 1:
+                    night_shifts += f"<br>Es sind noch {night_shifts_count_year - night_shifts_count} Nachtschicht für dich disponiert.<br>"
+                elif night_shifts_count_year - night_shifts_count > 1:
+                    night_shifts += f"<br>Es sind noch {night_shifts_count_year - night_shifts_count} Nachtschichten für dich disponiert.<br>"
+                if night_shifts_count_year == 1:
+                    night_shifts += f"Das ist dann insgesamt {night_shifts_count_year} Nachtschicht für {date.today().year}."
+                else:
+                    night_shifts += f"Das wären dann insgesamt {night_shifts_count_year} Nachtschichten für {date.today().year}."
     kalenderurls = (
         f'<a href="{kalenderbase}{kalender_id}">Kalender</a><br>'
         f'<a href="{abobase}{kalender_id}?export">Abo-URL</a><br>Alle Angaben und Inhalte sind ohne Gewähr.'
     )
+    if night_shifts:
+        body += "<br><br>" + night_shifts
     body += "<br><br>" + kalenderurls
     msg = MIMEMultipart()
     msg['From'] = f"{from_display_name} <{from_email}>"
