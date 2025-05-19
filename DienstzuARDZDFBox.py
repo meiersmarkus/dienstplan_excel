@@ -693,21 +693,11 @@ def send_email(subject, body, to_email, kalender_id):
         night_shifts_count = count_night_shifts(client, calendar, date.today())
         night_shifts_count_year = count_night_shifts(client, calendar, datetime.datetime(date.today().year, 12, 31, 23, 59))
         if night_shifts_count > 0 or night_shifts_count_year > 0:
-            if night_shifts_count == 1:
-                night_shifts = f"Im Jahr {date.today().year} hattest du bisher {night_shifts_count} Nachtschicht."
-            elif night_shifts_count > 1:
-                night_shifts = f"Im Jahr {date.today().year} hattest du bisher {night_shifts_count} Nachtschichten."
-            else:
-                night_shifts = f"Im Jahr {date.today().year} hattest du bisher keine Nachtschichten."
-            if night_shifts_count_year - night_shifts_count > 0:
-                if night_shifts_count_year - night_shifts_count == 1:
-                    night_shifts += f"<br>Es sind noch {night_shifts_count_year - night_shifts_count} Nachtschicht für dich disponiert.<br>"
-                elif night_shifts_count_year - night_shifts_count > 1:
-                    night_shifts += f"<br>Es sind noch {night_shifts_count_year - night_shifts_count} Nachtschichten für dich disponiert.<br>"
-                if night_shifts_count_year == 1:
-                    night_shifts += f"Das ist dann insgesamt {night_shifts_count_year} Nachtschicht für {date.today().year}."
-                else:
-                    night_shifts += f"Das wären dann insgesamt {night_shifts_count_year} Nachtschichten für {date.today().year}."
+            night_shifts = f"Im Jahr {date.today().year} hattest du bisher {night_shifts_count} Nachtschicht{'en' if night_shifts_count != 1 else ''}."
+            remaining_shifts = night_shifts_count_year - night_shifts_count
+            if remaining_shifts > 0:
+                night_shifts += f"<br>Es sind noch {remaining_shifts} Nachtschicht{'en' if remaining_shifts != 1 else ''} für dich disponiert.<br>"
+            night_shifts += f"Das {'ist' if night_shifts_count_year == 1 else 'wären'} dann insgesamt {night_shifts_count_year} Nachtschicht{'en' if night_shifts_count_year != 1 else ''} für {date.today().year}."
     kalenderurls = (
         f'<a href="{kalenderbase}{kalender_id}">Kalender</a><br>'
         f'<a href="{abobase}{kalender_id}?export">Abo-URL</a><br>Alle Angaben und Inhalte sind ohne Gewähr.'
