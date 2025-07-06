@@ -18,9 +18,11 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dateutil.easter import easter
 from itertools import chain
+import logging
 
 # Initialisiere Timer
 timers = {}
+logging.getLogger("caldav").disabled = True
 
 
 def start_timer(timer_name):
@@ -112,7 +114,7 @@ def count_night_shifts(client, calendar, search_start):
 
     try:
         # Events im Zeitraum abrufen
-        events = calendar.date_search(start=startoftheyear, end=dateofentry)
+        events = calendar.search(start=startoftheyear, end=dateofentry, event=True)
     except Exception as e:
         print(f"[ERROR] Fehler beim Abrufen der Events: {e}")
         return 0
@@ -174,11 +176,11 @@ def create_ical_event(
         )
         busy = (
             "X-MICROSOFT-CDO-BUSYSTATUS:OOF"
-            if any(term in title for term in ["FT", "UR", "NV", "KD", "KR"])
+            if any(term in title for term in ["FT", "UR", "NV", "KD", "KR", "FU", "AS"])
             else "X-MICROSOFT-CDO-BUSYSTATUS:BUSY"
         )
         transparent = "TRANSP:TRANSPARENT" if any(
-            term in title for term in ["FT", "UR", "NV", "KD", "KR"]
+            term in title for term in ["FT", "UR", "NV", "KD", "KR", "FU", "AS"]
         ) else "TRANSP:OPAQUE"
         sanitized_title = title.replace("\n", " ").replace("\r", "").strip()
         sanitized_desc = description_str.replace("\n", " ").replace("\r", "").strip()
@@ -234,7 +236,7 @@ def process_all_day_event(service_entry, start_date):  # Funktion zur Verarbeitu
 
     try:
         # Suche nach vorhandenen ganztägigen Terminen
-        existing_events = calendar.date_search(start_datetime, start_datetime + pd.Timedelta(days=1))
+        existing_events = calendar.search(start=start_datetime, end=start_datetime + pd.Timedelta(days=1), event=True)
         event_exists = False
 
         for event in existing_events:
@@ -279,7 +281,6 @@ def process_all_day_event(service_entry, start_date):  # Funktion zur Verarbeitu
 
 # Funktion zur Verarbeitung eines zeitgebundenen Events
 def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzettel_we, countnightshifts, nonightshifts):
-    global night_shifts_count
     # Extract start and end time from Excel entry
     time_match = re.match(r'(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})', service_entry)
     if time_match:
@@ -355,9 +356,10 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
             # print(f"[DEBUG] Excel: '{full_title.strip()}' am '{start_datetime.date()}' von '{start_datetime.time()}' bis '{end_datetime.time()}' Uhr.")
             # print(f"[DEBUG] Prüfe '{full_title.strip()}' am '{start_datetime.date()}' mit Laufzetteldatei vom '{current_laufzettel.strftime('%d.%m.%Y')}'")  
             # Now check if the event with the full title already exists
-            existing_events = calendar.date_search(
-                start_datetime.replace(hour=0, minute=0, second=0),
-                end_datetime.replace(hour=23, minute=59, second=59)
+            existing_events = calendar.search(
+                start=start_datetime.replace(hour=0, minute=0, second=0),
+                end=end_datetime.replace(hour=23, minute=59, second=59), 
+                event=True
             )
             event_exists = False
 
@@ -484,7 +486,7 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
                         current_laufzettel = nextlaufzettel
                         getnextlaufzettel()
 
-                    existing_events = calendar.date_search(start_datetime, start_datetime + pd.Timedelta(days=1))
+                    existing_events = calendar.search(start=start_datetime, end=start_datetime + pd.Timedelta(days=1), event=True)
                     # print(f"[DEBUG] Prüfe {start_datetime.strftime('%d.%m.%Y')} auf Termine.")
                     for event in existing_events:
                         event.load()
@@ -507,7 +509,7 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
     end_of_january = datetime.datetime(year, 1, 31, 23, 59, tzinfo=tz_berlin)
 
     try:
-        termine = calendar.date_search(start=start_of_january, end=end_of_january)
+        termine = calendar.search(start=start_of_january, end=end_of_january, event=True)
         if len(termine) == 0:
             nonightshifts = True
         else:
@@ -693,11 +695,21 @@ def send_email(subject, body, to_email, kalender_id):
         night_shifts_count = count_night_shifts(client, calendar, date.today())
         night_shifts_count_year = count_night_shifts(client, calendar, datetime.datetime(date.today().year, 12, 31, 23, 59))
         if night_shifts_count > 0 or night_shifts_count_year > 0:
-            night_shifts = f"Im Jahr {date.today().year} hattest du bisher {night_shifts_count} Nachtschicht{'en' if night_shifts_count != 1 else ''}."
-            remaining_shifts = night_shifts_count_year - night_shifts_count
-            if remaining_shifts > 0:
-                night_shifts += f"<br>Es sind noch {remaining_shifts} Nachtschicht{'en' if remaining_shifts != 1 else ''} für dich disponiert.<br>"
-            night_shifts += f"Das {'ist' if night_shifts_count_year == 1 else 'wären'} dann insgesamt {night_shifts_count_year} Nachtschicht{'en' if night_shifts_count_year != 1 else ''} für {date.today().year}."
+            if night_shifts_count == 1:
+                night_shifts = f"Im Jahr {date.today().year} hattest du bisher {night_shifts_count} Nachtschicht."
+            elif night_shifts_count > 1:
+                night_shifts = f"Im Jahr {date.today().year} hattest du bisher {night_shifts_count} Nachtschichten."
+            else:
+                night_shifts = f"Im Jahr {date.today().year} hattest du bisher keine Nachtschichten."
+            if night_shifts_count_year - night_shifts_count > 0:
+                if night_shifts_count_year - night_shifts_count == 1:
+                    night_shifts += f"<br>Es sind noch {night_shifts_count_year - night_shifts_count} Nachtschicht für dich disponiert.<br>"
+                elif night_shifts_count_year - night_shifts_count > 1:
+                    night_shifts += f"<br>Es sind noch {night_shifts_count_year - night_shifts_count} Nachtschichten für dich disponiert.<br>"
+                if night_shifts_count_year == 1:
+                    night_shifts += f"Das ist dann insgesamt {night_shifts_count_year} Nachtschicht für {date.today().year}."
+                else:
+                    night_shifts += f"Das wären dann insgesamt {night_shifts_count_year} Nachtschichten für {date.today().year}."
     kalenderurls = (
         f'<a href="{kalenderbase}{kalender_id}">Kalender</a><br>'
         f'<a href="{abobase}{kalender_id}?export">Abo-URL</a><br>Alle Angaben und Inhalte sind ohne Gewähr.'
