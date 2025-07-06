@@ -37,6 +37,7 @@ class ExcludeCaldavFilter(logging.Filter):
 
 # Add the filter to the log handler
 log_handler.addFilter(ExcludeCaldavFilter())
+logging.getLogger("caldav").disabled = True
 
 # Logger einrichten
 logger = logging.getLogger()
@@ -146,7 +147,11 @@ def parse_html_for_workplace_info(html_file_path):  # Function to parse HTML and
 def create_ical_event(full_title, start_datetime, end_datetime, description):
     try:
         now = datetime.datetime.now(pytz.timezone("Europe/Berlin"))
-        location = ''
+        location = (
+            description if description else
+            f"Eintrag: {full_title}, Alle Angaben und Inhalte sind ohne Gewähr. "
+            f"Änderungsdatum: {datetime.datetime.now().strftime('%d.%m.%Y, %H:%M')}"
+        )
         # Normal events with time and timezone
         start_str = start_datetime.strftime('%Y%m%dT%H%M%S')
         end_str = end_datetime.strftime('%Y%m%dT%H%M%S') if end_datetime else start_str
@@ -164,6 +169,7 @@ def create_ical_event(full_title, start_datetime, end_datetime, description):
         transparent = "TRANSP:OPAQUE"
         sanitized_title = full_title.replace("\n", " ").replace("\r", "").strip()
         sanitized_desc = description_str.replace("\n", " ").replace("\r", "").strip()
+        location = location.replace("\n", " ").replace("\r", "").strip()
         ical_event = f"""BEGIN:VCALENDAR
 CALSCALE:GREGORIAN
 VERSION:2.0
@@ -178,7 +184,7 @@ UID:{now.timestamp()}@meiersmarkus.de
 SEQUENCE:1
 DESCRIPTION:{sanitized_desc}
 LAST-MODIFIED:{now.strftime('%Y%m%dT%H%M%SZ')}
-{location}
+LOCATION:{location}
 {busy}
 END:VEVENT
 BEGIN:VTIMEZONE
