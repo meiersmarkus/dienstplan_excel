@@ -26,11 +26,23 @@ logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 logger.addHandler(log_handler)
 
+# Filter für caldav-Warnungen hinzufügen
+class CaldavWarningFilter(logging.Filter):
+    def filter(self, record):
+        if record.name == "caldav" and "Deviation from expectations found: Unexpected content type: text/html; charset=UTF-8" in record.getMessage():
+            return False
+        return True
+
+logger.addFilter(CaldavWarningFilter())
+
 # Ausgabe auf Konsole
 console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setFormatter(log_formatter)
 console_handler.setLevel(logging.DEBUG)
 logger.addHandler(console_handler)
+
+# caldav-Logger auf ERROR setzen, um WARNINGS zu unterdrücken (optional)
+logging.getLogger("caldav").setLevel(logging.ERROR)
 
 # Timer-Funktionalität
 timers = {}
@@ -44,10 +56,11 @@ def end_timer(timer_name, task_description):
     if timer_name in timers:
         end_time = time.time()
         elapsed_time = end_time - timers[timer_name]
-        minutes, seconds_remainder = divmod(elapsed_time, 60)
-        formatted_time = f"{int(minutes)}:{int(seconds_remainder):02d}"
-        logger.info(f"[TIME] {task_description}: {formatted_time} Min.")
-        del timers[timer_name]
+        if elapsed_time > 20:
+            minutes, seconds_remainder = divmod(elapsed_time, 60)
+            formatted_time = f"{int(minutes)}:{int(seconds_remainder):02d}"
+            logger.info(f"[TIME] {task_description}: {formatted_time} Min.")
+            del timers[timer_name]
     else:
         logger.error(f"[ERROR] Kein aktiver Timer mit dem Namen: {timer_name}")
 
@@ -92,7 +105,7 @@ def run_download_script():
             ["python", os.path.join(BASE_DIR, "DienstplanDownload.py")],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=300  # Timeout von 5 Minuten
+            timeout=30  # Timeout von 30 Sekunden
         )
         if result.stdout:
             logger.debug(result.stdout.decode().rstrip())
@@ -114,7 +127,7 @@ def update_calendar(name, args):
             ["python", os.path.join(BASE_DIR, "DienstzuARDZDFBox.py"), name] + args,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=300  # Timeout von 5 Minuten
+            timeout=120  # Timeout von 2 Minuten
         )
         if result.stdout:
             output_lines = result.stdout.decode().splitlines()
@@ -202,7 +215,7 @@ def delete_events(name, args):
             ["python", os.path.join(BASE_DIR, "Diensteloeschen.py"), name] + args,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=300  # Timeout von 5 Minuten
+            timeout=120  # Timeout von 2 Minuten
         )
         if result.stdout:
             output_lines = result.stdout.decode().splitlines()
