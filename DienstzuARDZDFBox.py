@@ -313,9 +313,10 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
         workplace_info = laufzettel_we if is_holiday_flag else laufzettel_werktags
         # print(f"[DEBUG] Verwende {'Wochenende' if is_holiday_flag else 'Werktags'}-Tabelle für {start_date.strftime('%d.%m.%Y')}")
         try:
-            cleaned_service_entry = re.sub(r'\s*\(WT\)|\s*Info ', '', service_entry[time_match.end():].strip())
+            # Entferne "(WT)", "Info" und alle Leerzeichen aus dem zu vergleichenden String
+            cleaned_service_entry = re.sub(r'\s*\(WT\)|\s*Info |\s+', '', service_entry[time_match.end():].strip())
             for info in workplace_info:
-                dienstname = info['dienstname'].replace("Samstag: ", "").replace("Sonntag: ", "").strip()
+                dienstname = info['dienstname'].replace("Samstag: ", "").replace("Sonntag: ", "").replace(" ", "").strip()
                 # print(f"[DEBUG] Vergleiche Excel '{cleaned_service_entry}' mit Laufzettel '{dienstname}'")
                 if cleaned_service_entry.lower() in dienstname.lower().strip():
                     # print(f"[DEBUG] {dienstname} gefunden. Dienstzeit: {info['dienstzeit']}")
