@@ -95,14 +95,14 @@ for year in years:
 
 feiertag, holiday_name = is_holiday_or_weekend(datetime.today())
 if feiertag and time.localtime().tm_hour > 8:
-    print(f"[INFO] {datetime.today().strftime('%d.%m.%Y')} ist {holiday_name}. Skript wird nicht ausgeführt.")
+    logger.info(f"[INFO] {datetime.today().strftime('%d.%m.%Y')} ist {holiday_name}. Skript wird nicht ausgeführt.")
     sys.exit(0)
 
 def run_download_script():
     """Führt das Download-Skript aus und gibt den Rückgabewert zurück."""
     try:
         result = subprocess.run(
-            ["python", os.path.join(BASE_DIR, "DienstplanDownload.py")],
+            ["python", os.path.join(BASE_DIR, "DienstplanDownload.py"), "-f"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=30  # Timeout von 30 Sekunden
@@ -127,7 +127,7 @@ def update_calendar(name, args):
             ["python", os.path.join(BASE_DIR, "DienstzuARDZDFBox.py"), name] + args,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=120  # Timeout von 2 Minuten
+            timeout=240  # Timeout von 4 Minuten
         )
         if result.stdout:
             output_lines = result.stdout.decode().splitlines()
@@ -215,7 +215,7 @@ def delete_events(name, args):
             ["python", os.path.join(BASE_DIR, "Diensteloeschen.py"), name] + args,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=120  # Timeout von 2 Minuten
+            timeout=240  # Timeout von 4 Minuten
         )
         if result.stdout:
             output_lines = result.stdout.decode().splitlines()
@@ -239,7 +239,6 @@ def main():
         logger.debug("[DEBUG] Lösche alte Einträge...")
         deleteoldentries()
         return
-    original_latest_date = get_latest_modification_date(BASE_DIR)
     if nodownload:
         logger.debug("[DEBUG] Direkter Start ohne Download...")
         update_calendars()
