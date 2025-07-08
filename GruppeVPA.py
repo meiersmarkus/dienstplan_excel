@@ -18,6 +18,7 @@ import signal
 from bs4 import BeautifulSoup
 import holidays
 from dateutil.easter import easter
+import subprocess
 
 # Basisverzeichnis des Skripts
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -25,7 +26,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Logging-Konfiguration
 log_formatter = logging.Formatter('%(message)s')
 log_file = os.path.join(BASE_DIR, "DienstplanscriptGruppe.log")
-log_handler = RotatingFileHandler(log_file, maxBytes=1024 * 1024, backupCount=3)
+log_handler = RotatingFileHandler(log_file, maxBytes=5120 * 1024, backupCount=3)
 log_handler.setFormatter(log_formatter)
 log_handler.setLevel(logging.DEBUG)
 
@@ -249,7 +250,7 @@ def process_timed_event(service_entry, date, name_without_brackets, laufzettel_w
             # Get the basic title from the Excel entry (e.g., "Schnitt 2")
             title = service_entry[time_match.end():].strip()
             # Entferne "Info " und "(WT) " von dem Titel
-            title = re.sub(r'\s*\(WT\)|\s*Info ', '', title)
+            title = re.sub(r'\s*\(WT\)|\s*Info |\s+', '', title)
             # logger.debug(f"[DEBUG] '{title}' ist der Titel des Events.")
             # logger.debug(f"[DEBUG] Excel event: {title}, start: {start_time_str}, end: {end_time_str}")
             # logger.debug(f"[DEBUG] Excel event: {cleaned_service_entry}")
@@ -262,11 +263,9 @@ def process_timed_event(service_entry, date, name_without_brackets, laufzettel_w
             is_holiday_flag, holiday_name = is_holiday_or_weekend(date)
             workplace_info = laufzettel_we if is_holiday_flag else laufzettel_werktags
             # print(f"[DEBUG] {workplace_info}")
-            cleaned_service_entry = re.sub(r'\s*\(WT\)|\s*Info ', '', service_entry[time_match.end():].strip())
-            if cleaned_service_entry == "Ingest 1": workplace = "ING1"
-            if cleaned_service_entry == "Ingest 2": workplace = "ING2"
+            cleaned_service_entry = re.sub(r'\s*\(WT\)|\s*Info |\s+', '', service_entry[time_match.end():].strip())
             for info in workplace_info:
-                dienstname = info['dienstname'].replace("Samstag: ", "").replace("Sonntag: ", "").strip()
+                dienstname = info['dienstname'].replace("Samstag: ", "").replace("Sonntag: ", "").replace(" ", "").strip()
                 # print(f"[DEBUG] Vergleiche Excel '{cleaned_service_entry}' mit Laufzettel '{dienstname}'")
                 if cleaned_service_entry.lower() in dienstname.lower():
                     # print(f"[DEBUG] {dienstname} gefunden.")
@@ -288,13 +287,13 @@ def process_timed_event(service_entry, date, name_without_brackets, laufzettel_w
             # print(f"[DEBUG] Datum: {start_datetime.date()}, Dienst: {title}, Workplace: {workplace}")
             # Wenn der Dienst "IngSchni" ist, setze den Arbeitsplatz auf das, was bei workplace nach dem letzten Leerzeichen steht
             if cleaned_service_entry == "IngSchni": workplace = workplace.split()[-1]
-            
 
             # logger.debug(f"[DEBUG] Excel: '{full_title.strip()}' am '{start_datetime.date()}'.")
             # Now check if the event with the full title already exists
-            existing_events = calendar.date_search(
+            existing_events = calendar.search(
                 start=start_datetime.replace(hour=0, minute=0, second=0),
-                end=end_datetime.replace(hour=23, minute=59, second=59)
+                end=end_datetime.replace(hour=23, minute=59, second=59),
+                event=True
             )
             event_exists = False
 
@@ -364,73 +363,66 @@ def process_timed_event(service_entry, date, name_without_brackets, laufzettel_w
         signal.alarm(0)
 
 def process_excel_file(file_path, heute, schichten, laufzettel_werktags, laufzettel_we):
-    global nextlaufzettel, current_laufzettel  # Zugriff auf die globalen Variablen
+    global nextlaufzettel, current_laufzettel
+
+    # Kompilierte Regex-Ausdrücke (einmalig)
+    re_dot_to_colon = re.compile(r'(\b\d{2})\.(\d{2}\b)')
+    re_time_range = re.compile(r'^\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\s*')
+    re_cleanup = re.compile(r'\s*\(WT\)|\s*Info |\s+')
+    re_time_spacing = re.compile(r'(\b\d{2}:\d{2})\s*-\s*(\d{2}:\d{2}\b)')
+    re_name_brackets = re.compile(r'\s*[\r\n]*\(.*\)\s*[\r\n]*')
+
+    # Excel laden
     df = pd.read_excel(file_path, header=None, engine='openpyxl')
-    # Finde die erste Zeile, die Datumsangaben enthält (z. B. mit einem "I" in Spalte 0)
+
+    # Finde die Zeile mit "I" in Spalte 0
     identifier_row_index = df[df[0].astype(str).str.contains("I", na=False)].index[0]
     identifier_row = df.iloc[identifier_row_index]
-    # Versuch, den Namen flexibler zu finden
-    for day in range(1, 8):  # Spalten B bis H (1 bis 7)
+
+    for day in range(1, 8):  # Spalten B bis H
         date = identifier_row[day]
         try:
             date = pd.to_datetime(date).date()
         except Exception:
             continue
+
         if date != heute and date != heute + timedelta(days=1):
-        # if date != heute and date != heute + timedelta(days=1) and date != heute - timedelta(days=1):
-            # logger.debug(f"[DEBUG] {start_date.strftime('%a, %d.%m.%Y')} ist außerhalb des Zeitrahmens.")
             continue
-        # Durchsuche die Spalte unterhalb der Datumzeile
+
+        # logger.debug(f"[DEBUG] Verarbeite {date.strftime('%a, %d.%m.%Y')}")
+
         for row in range(identifier_row_index + 1, df.shape[0]):
-            service_entry = str(df.iat[row, day])  # Inhalt der aktuellen Zelle
-            # Entferne den vorderen Teil von service_entry, wenn es dem Muster "HH:MM - HH:MM" entspricht
-            service_entry = re.sub(r'(\b\d{2})\.(\d{2}\b)', r'\1:\2', service_entry)
-            schicht =  re.sub(r'^\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\s*', '', service_entry)
-            schicht = re.sub(r'\s*\(WT\)|\s*Info ', '', schicht)
-            # Prüfe, ob einer der Schichtbegriffe (schichten) schicht entspricht.
-            if schicht in schichten:
-                # Überprüfung, ob die Zelle leer oder NaN ist
-                if pd.isna(service_entry) or not isinstance(service_entry, str):
-                    service_entry = "FT"
-                else:
-                    service_entry = service_entry.replace('\n', ' ') \
-                                                .replace('\r', ' ') \
-                                                .replace('    ', ' ') \
-                                                .replace('   ', ' ') \
-                                                .replace('  ', ' ')
-                    service_entry = re.sub(
-                        r'(\b\d{2})\.(\d{2}\b)',
-                        r'\1:\2',
-                        service_entry
-                    )  # Ersetze Punkte im Zeitformat "HH.MM" durch Doppelpunkte "HH:MM"
-                    service_entry = re.sub(
-                        r'(\b\d{2}:\d{2})\s*-\s*(\d{2}:\d{2}\b)',
-                        r'\1 - \2',
-                        service_entry
-                    )  # Vereinheitliche das Zeitformat auf "HH:MM - HH:MM" (mit oder ohne Leerzeichen um den Bindestrich)
-                # logger.info(f"[INFO] {identifier_row[day].strftime('%a, %d.%m.%Y')}, {service_entry}")
+            cell = df.iat[row, day]
+            if pd.isna(cell):
+                continue
 
-                name = str(df.iat[row, 0])
-                # name_cleaned = re.sub(r',\s*[A-Z]\.?$', '', name).strip()
-                name_without_brackets = re.sub(r'\s*[\r\n]*\(.*\)\s*[\r\n]*', '', name)
-            
-                # logger.debug(f"[DEBUG] Am {date} bei '{name_without_brackets}': {service_entry}")
-                # Hier kannst du die Verarbeitung starten, z.B. weitergeben an eine Funktion
+            raw_entry = str(cell)
+            service_entry = re_dot_to_colon.sub(r'\1:\2', raw_entry)
+            schicht_key = re_cleanup.sub('', re_time_range.sub('', service_entry))
 
-                # print(f"[DEBUG] Nächster Laufzettel: {nextlaufzettel}")
-                if nextlaufzettel is not None:
-                    # Prüfe ob das aktuelle oder späteste Datum den Laufzettel-Wechsel erfordert
-                    if (date >= nextlaufzettel.date() and nextlaufzettel.date() > current_laufzettel.date()):
-                        print(f"[INFO] Wechsel zu Laufzettel ab {nextlaufzettel.strftime('%d.%m.%Y')}")
-                        html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
-                                                    'Laufzettel_' + nextlaufzettel.strftime('%Y%m%d') + '.html')
-                        laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info_with_cache(html_file_path)
-                        current_laufzettel = nextlaufzettel
-                        getnextlaufzettel()
+            if schicht_key not in schichten:
+                continue
 
-                if re.search(r'\b\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\b', service_entry):
-                    # logger.debug(f"[DEBUG] '{service_entry}' ist ein zeitgebundenes Event.")
-                    process_timed_event(service_entry, date, name_without_brackets, laufzettel_werktags, laufzettel_we)
+            # Jetzt service_entry vollständig normalisieren
+            service_entry = service_entry.replace('\n', ' ').replace('\r', ' ')
+            service_entry = re.sub(r' {2,}', ' ', service_entry)  # Mehrfach-Leerzeichen reduzieren
+            service_entry = re_time_spacing.sub(r'\1 - \2', service_entry)
+
+            name = str(df.iat[row, 0])
+            name_without_brackets = re_name_brackets.sub('', name)
+
+            # Laufzettel-Wechsel prüfen
+            if nextlaufzettel and (date >= nextlaufzettel.date() > current_laufzettel.date()):
+                print(f"[INFO] Wechsel zu Laufzettel ab {nextlaufzettel.strftime('%d.%m.%Y')}")
+                html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                              f'Laufzettel_{nextlaufzettel.strftime("%Y%m%d")}.html')
+                laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info_with_cache(html_file_path)
+                current_laufzettel = nextlaufzettel
+                getnextlaufzettel()
+
+            if re_time_spacing.search(service_entry):
+                process_timed_event(service_entry, date, name_without_brackets, laufzettel_werktags, laufzettel_we)
+
     return
 
 
@@ -640,6 +632,24 @@ laufzettel_werktags, laufzettel_we = initialize_laufzettel()
 
 end_timer("initial", "Initialisierung")
 
+# Download der Dienstpläne mit dem Script DownloadDienste.py
+try:
+    result = subprocess.run(
+        ["python", os.path.join(BASE_DIR, "DienstplanDownload.py")],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=30  # Timeout von 30 Sekunden
+    )
+    if result.stdout:
+        logger.debug(result.stdout.decode().rstrip())
+    if result.stderr:
+        logger.debug(result.stderr.decode().rstrip())
+except subprocess.TimeoutExpired:
+    logger.error("Download-Skript hat das Zeitlimit überschritten.")
+except Exception as e:
+    logger.error(f"Fehler beim Ausführen des Download-Skripts: {e}")
+
+
 xlsx_files = [
     os.path.join(root, f)
     for root, _, files in os.walk(target_folder)
@@ -651,7 +661,7 @@ heute = date.today()
 start_date = heute - timedelta(days=4)
 end_date = heute - timedelta(days=1)
 # print(f"[DEBUG] Lösche alle Termine zwischen {start_date.strftime('%d.%m.%Y')} und {end_date.strftime('%d.%m.%Y')}")
-events = calendar.date_search(start=start_date, end=end_date)
+events = calendar.search(start=start_date, end=end_date, event=True)
 for event in events:
     vevent = event.icalendar_instance
     for component in vevent.walk('VEVENT'):

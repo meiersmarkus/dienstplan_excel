@@ -83,16 +83,16 @@ def download_dienste(folder_path):
 
         # Vergleich der Änderungsdaten und Exit-Status
         if original_latest_date and new_latest_date and original_latest_date == new_latest_date:
-            if fast and original_latest_date:
-                print("[DEBUG] Schneller Modus aktiviert. Keine Änderungen festgestellt.")
-                delete_old_files(original_latest_date, plaene_dir)
             # print("[DEBUG] Keine Änderungen festgestellt.")
+            if fast and original_latest_date:
+                deleted_count = delete_old_files(original_latest_date, plaene_dir)
+                # print(f"[DEBUG] Schneller Modus aktiviert. '{deleted_count}' Excel-Dateien entfernt.")
             sys.exit(1)  # Beende das Skript ohne Änderungen
         else:
-            print("[DEBUG] Neue Änderungen festgestellt.")
+            # print("[DEBUG] Neue Änderungen festgestellt.")
             if fast and original_latest_date:
-                print("[DEBUG] Schneller Modus aktiviert. Lösche alte Excel-Dateien.")
-                delete_old_files(original_latest_date, plaene_dir)
+                deleted_count = delete_old_files(original_latest_date, plaene_dir)
+                print(f"[DEBUG] Schneller Modus aktiviert. '{deleted_count}' Excel-Dateien entfernt.")
             sys.exit(0)  # Beende das Skript mit Änderungen
     else:
         print("[DEBUG] Verbindung fehlgeschlagen. Download nicht möglich.")
@@ -101,14 +101,16 @@ def download_dienste(folder_path):
 def delete_old_files(original_latest_date, plaene_dir):
     # Prüfe jede Datei im Verzeichnis auf ein neues Änderungsdatum und lösche Dateien, die älter sind als original_latest_date
     for root, _, files in os.walk(plaene_dir):
+        deleted_count = sum(1 for file in files if file.endswith(".xlsx") and os.path.getmtime(os.path.join(root, file)) < original_latest_date.timestamp())
         for file in files:
             file_path = os.path.join(root, file)
             if file.endswith(".xlsx"):
                 mod_time = os.path.getmtime(file_path)
                 # print(f"[DEBUG] Überprüfe Datei: {file}, Änderungsdatum: {dt.datetime.fromtimestamp(mod_time)} gegenüber {original_latest_date}")
                 if original_latest_date and dt.datetime.fromtimestamp(mod_time) < original_latest_date:
-                    print(f"[DEBUG] Lösche alte Datei: {file}")
+                    # print(f"[DEBUG] Lösche alte Datei: {file}")
                     os.remove(file_path)
+    return deleted_count
 
 def check_server_connection(url):
     """Überprüft, ob der Server erreichbar ist."""
