@@ -86,13 +86,13 @@ def download_dienste(folder_path):
             # print("[DEBUG] Keine Änderungen festgestellt.")
             if fast and original_latest_date:
                 deleted_count = delete_old_files(original_latest_date, plaene_dir)
-                # print(f"[DEBUG] Schneller Modus aktiviert. '{deleted_count}' Excel-Dateien entfernt.")
+                # print(f"[DEBUG] Schneller Modus aktiviert. {deleted_count} Excel-Dateien entfernt.")
             sys.exit(1)  # Beende das Skript ohne Änderungen
         else:
             # print("[DEBUG] Neue Änderungen festgestellt.")
             if fast and original_latest_date:
                 deleted_count = delete_old_files(original_latest_date, plaene_dir)
-                print(f"[DEBUG] Schneller Modus aktiviert. '{deleted_count}' Excel-Dateien entfernt.")
+                print(f"[DEBUG] Schneller Modus aktiviert. {deleted_count} Excel-Dateien entfernt.")
             sys.exit(0)  # Beende das Skript mit Änderungen
     else:
         print("[DEBUG] Verbindung fehlgeschlagen. Download nicht möglich.")
