@@ -39,7 +39,7 @@ def end_timer(timer_name, task_description):
         elapsed_time = end_time - timers[timer_name]
         # if timer_name == "gesamt":
         #    print(f"[TIME] {task_description}: {elapsed_time:.2f} Sekunden", end="")
-        if not (timer_name in ("caldav", "gesamt") and elapsed_time <= 20):
+        if not (timer_name in ("caldav", "initial", "gesamt") and elapsed_time <= 20):
             print(f"[TIME] {task_description}: {elapsed_time:.2f} Sekunden")
         del timers[timer_name]  # Timer entfernen, wenn er fertig ist
     else:
