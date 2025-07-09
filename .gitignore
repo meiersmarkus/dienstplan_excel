@@ -3,3 +3,8 @@
 *.log
 *.xlsx
 .DS_Store
+*.prof
+*.ics
+GruppeVPAStart.py
+.DS_Store
+.DS_Store

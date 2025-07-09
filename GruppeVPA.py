@@ -403,6 +403,15 @@ def process_excel_file(file_path, heute, schichten, laufzettel_werktags, laufzet
             if schicht_key not in schichten:
                 continue
 
+            # Sonderfall Projekt und Bereitschaft (setze Uhrzeit des Dienstes von 09:00 bis 09:01 Uhr)
+            if "Projekt" in service_entry or "Bereitschaft" in service_entry:
+                # Prüfe, ob Zeile kleiner als 86 ist
+                if row >= 86:
+                    continue
+                # logger.debug(f"[DEBUG] Sonderfall Projekt oder Bereitschaft: {service_entry}")
+                # Füge Uhrzeit an Anfang des service_entrys hinzu
+                service_entry = f"09:00 - 09:01 {service_entry}"
+
             # Jetzt service_entry vollständig normalisieren
             service_entry = service_entry.replace('\n', ' ').replace('\r', ' ')
             service_entry = re.sub(r' {2,}', ' ', service_entry)  # Mehrfach-Leerzeichen reduzieren
@@ -419,6 +428,8 @@ def process_excel_file(file_path, heute, schichten, laufzettel_werktags, laufzet
                 laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info_with_cache(html_file_path)
                 current_laufzettel = nextlaufzettel
                 getnextlaufzettel()
+
+            # print(f"[DEBUG] Dienst: {service_entry} am {date.strftime('%d.%m.%Y')} für {name_without_brackets}")
 
             if re_time_spacing.search(service_entry):
                 process_timed_event(service_entry, date, name_without_brackets, laufzettel_werktags, laufzettel_we)
