@@ -507,10 +507,10 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
     nonightshifts = True
     year = identifier_row[1].year
     start_of_january = datetime.datetime(year, 1, 1, 0, 0, tzinfo=tz_berlin)
-    end_of_january = datetime.datetime(year, 1, 31, 23, 59, tzinfo=tz_berlin)
+    end_of_march = datetime.datetime(year, 3, 31, 23, 59, tzinfo=tz_berlin)
 
     try:
-        termine = calendar.search(start=start_of_january, end=end_of_january, event=True)
+        termine = calendar.search(start=start_of_january, end=end_of_march, event=True)
         if len(termine) == 0:
             nonightshifts = True
         else:
