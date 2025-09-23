@@ -264,7 +264,7 @@ def process_all_day_event(service_entry, start_date):  # Funktion zur Verarbeitu
                 event_exists = True
                 break
             elif event_start == start_datetime.date():
-                print(f"[DEBUG] Anderer Termin: '{event_summary}' am {start_datetime.strftime('%d.%m.%Y')} wird gelöscht.")
+                print(f"[DEBUG] {start_datetime.strftime('%d.%m.%Y')}, '{event_summary}' wird gelöscht.")
                 event.delete()
 
         # Event erstellen, wenn kein passender Termin vorhanden ist
@@ -406,7 +406,7 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
                 # print(f"[DEBUG] Excel: '{full_title.strip()}' am '{start_datetime.date()}'. "
                 #       f"Kalender: '{event_summary}' am '{event_start.date()}'.")
                 if event_start.date() == start_datetime.date():
-                    print(f"[DEBUG] Anderer Termin: '{event_summary}' am {start_datetime.strftime('%d.%m.%Y')} wird gelöscht.")
+                    print(f"[DEBUG] {start_datetime.strftime('%d.%m.%Y')}, '{event_summary}' wird gelöscht.")
                     event.delete()
 
             # If the event does not exist, create it with all the information collected

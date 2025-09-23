@@ -287,6 +287,7 @@ def process_timed_event(service_entry, date, name_without_brackets, laufzettel_w
             # print(f"[DEBUG] Datum: {start_datetime.date()}, Dienst: {title}, Workplace: {workplace}")
             # Wenn der Dienst "IngSchni" ist, setze den Arbeitsplatz auf das, was bei workplace nach dem letzten Leerzeichen steht
             if cleaned_service_entry == "IngSchni": workplace = workplace.split()[-1]
+            if workplace == "Cut6 / Box2": workplace = "Cut6"
 
             # logger.debug(f"[DEBUG] Excel: '{full_title.strip()}' am '{start_datetime.date()}'.")
             # Now check if the event with the full title already exists
@@ -401,15 +402,13 @@ def process_excel_file(file_path, heute, schichten, laufzettel_werktags, laufzet
             schicht_key = re_cleanup.sub('', re_time_range.sub('', service_entry))
 
             if schicht_key not in schichten:
-                continue
+                if not "Projekt" in service_entry and not "Bereitschaft" in service_entry:
+                    continue
 
             # Sonderfall Projekt und Bereitschaft (setze Uhrzeit des Dienstes von 09:00 bis 09:01 Uhr)
             if "Projekt" in service_entry or "Bereitschaft" in service_entry:
-                # Prüfe, ob Zeile kleiner als 86 ist
                 if row >= 86:
                     continue
-                # logger.debug(f"[DEBUG] Sonderfall Projekt oder Bereitschaft: {service_entry}")
-                # Füge Uhrzeit an Anfang des service_entrys hinzu
                 service_entry = f"09:00 - 09:01 {service_entry}"
 
             # Jetzt service_entry vollständig normalisieren

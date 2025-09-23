@@ -1,4 +1,5 @@
 import os
+import math
 import subprocess
 import sys
 import time
@@ -13,11 +14,17 @@ from dateutil.easter import easter
 
 # Basisverzeichnis des Skripts
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_DIR = "/share/LOGS"
+
+# Prüfen, ob LOG_DIR existiert, sonst BASE_DIR nehmen
+if os.path.isdir(LOG_DIR):
+    log_file = os.path.join(LOG_DIR, "Dienstplanscript.log")
+else:
+    log_file = os.path.join(BASE_DIR, "Dienstplanscript.log")
 
 # Logging-Konfiguration
 log_formatter = logging.Formatter('%(message)s')
-log_file = os.path.join(BASE_DIR, "Dienstplanscript.log")
-log_handler = RotatingFileHandler(log_file, maxBytes=1024 * 1024, backupCount=3)
+log_handler = RotatingFileHandler(log_file, maxBytes=5120 * 1024, backupCount=3, encoding="utf-8")
 log_handler.setFormatter(log_formatter)
 log_handler.setLevel(logging.DEBUG)
 
@@ -101,12 +108,20 @@ if feiertag and time.localtime().tm_hour > 8:
 def run_download_script():
     """Führt das Download-Skript aus und gibt den Rückgabewert zurück."""
     try:
-        result = subprocess.run(
-            ["python", os.path.join(BASE_DIR, "DienstplanDownload.py"), "-f"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=30  # Timeout von 30 Sekunden
-        )
+        if force:
+            result = subprocess.run(
+                ["python", os.path.join(BASE_DIR, "DienstplanDownload.py")],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=30  # Timeout von 30 Sekunden
+            )
+        else:
+            result = subprocess.run(
+                ["python", os.path.join(BASE_DIR, "DienstplanDownload.py"), "-f"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=30  # Timeout von 30 Sekunden
+            )
         if result.stdout:
             logger.debug(result.stdout.decode().rstrip())
         if result.stderr:
@@ -161,8 +176,12 @@ def update_calendars():
     """Startet die Kalenderaktualisierungen für alle Kollegen parallel."""
     config_path = os.path.join(BASE_DIR, 'colleagues.json')
     colleagues = load_colleagues_from_config(config_path)
+    
+    cpu_count = os.cpu_count() or 1
+    workers = max(1, math.floor(cpu_count * 0.5))
+    logger.info(f"Gefundene CPUs: {cpu_count}, benutze {workers} Executor-Threads")
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [executor.submit(update_calendar, name, args) for name, args in colleagues]
         for future in as_completed(futures):
             try:
