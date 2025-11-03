@@ -84,6 +84,9 @@ def parse_html_for_workplace_info(html_file_path):  # Function to parse HTML and
                     })
                     if len(info) > 40:
                         break
+        for entry in info:
+            if re.search(r"[\u00A0\u200B\uFEFF]", str(entry)):
+                print("[DEBUG] Unsichtbare Zeichen gefunden:", repr(entry))
         return info
 
     # HTML parsen
@@ -243,6 +246,9 @@ def process_all_day_event(service_entry, start_date):  # Funktion zur Verarbeitu
             event.load()
             event_summary = event.vobject_instance.vevent.summary.value
             event_start = event.vobject_instance.vevent.dtstart.value
+            event_end = (event.vobject_instance.vevent.dtend.value
+                         if hasattr(event.vobject_instance.vevent, 'dtend')
+                         else None)
 
             if any(term in event_summary for term in ['FT']) and user_name == load_credentials("user2", config_path):
                 print(f"[DEBUG] Lösche {event_summary} vom {event_start}, da FT nicht eingetragen werden sollen.")
@@ -264,7 +270,10 @@ def process_all_day_event(service_entry, start_date):  # Funktion zur Verarbeitu
                 event_exists = True
                 break
             elif event_start == start_datetime.date():
-                print(f"[DEBUG] {start_datetime.strftime('%d.%m.%Y')}, '{event_summary}' wird gelöscht.")
+                if isinstance(event_start, datetime.datetime) and isinstance(event_end, datetime.datetime):
+                    print(f"[DEBUG] {start_datetime.strftime('%d.%m.%Y')}, {event_start.strftime('%H:%M')} bis {event_end.strftime('%H:%M')} '{event_summary}' wird gelöscht.")
+                else:
+                    print(f"[DEBUG] {start_datetime.strftime('%d.%m.%Y')}, '{event_summary}' wird gelöscht.")
                 event.delete()
 
         # Event erstellen, wenn kein passender Termin vorhanden ist
@@ -278,6 +287,8 @@ def process_all_day_event(service_entry, start_date):  # Funktion zur Verarbeitu
         print(f"[ERROR] Fehler beim Speichern oder Löschen des ganztägigen Events: {title} am {start_datetime}")
         print(e)
 
+def normalize_string(s):
+    return re.sub(r'\s+', ' ', s.strip())
 
 # Funktion zur Verarbeitung eines zeitgebundenen Events
 def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzettel_we, countnightshifts, nonightshifts):
@@ -290,15 +301,17 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
         start_datetime = datetime.datetime.strptime(f"{start_date.strftime('%Y-%m-%d')} {start_time_str}", '%Y-%m-%d %H:%M')
         end_datetime = datetime.datetime.strptime(f"{start_date.strftime('%Y-%m-%d')} {end_time_str}", '%Y-%m-%d %H:%M')
 
+        if user_name == load_credentials("user1", config_path) and end_datetime.time() < datetime.time(8, 0):
+            end_datetime = tz_berlin.localize(
+                datetime.datetime.combine(end_datetime.date(), datetime.time(23, 59)), is_dst=None
+            )
+        elif end_datetime < start_datetime:
+            end_datetime += datetime.timedelta(days=1)
+
         if start_datetime.tzinfo is None:
             start_datetime = tz_berlin.localize(start_datetime)
         if end_datetime.tzinfo is None:
-            end_datetime = tz_berlin.localize(end_datetime)
-
-        if user_name == load_credentials("user1", config_path) and end_datetime.time() < datetime.time(8, 0):
-            end_datetime = tz_berlin.localize(datetime.datetime.combine(end_datetime.date(), datetime.time(23, 59)))
-        elif end_datetime < start_datetime:
-            end_datetime += datetime.timedelta(days=1)
+            end_datetime = tz_berlin.localize(end_datetime, is_dst=None)          
 
         # Get the basic title from the Excel entry (e.g., "Schnitt 2")
         title = service_entry[time_match.end():].strip() or "Kein Titel"
@@ -358,7 +371,7 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
             # print(f"[DEBUG] Prüfe '{full_title.strip()}' am '{start_datetime.date()}' mit Laufzetteldatei vom '{current_laufzettel.strftime('%d.%m.%Y')}'")  
             # Now check if the event with the full title already exists
             existing_events = calendar.search(
-                start=start_datetime.replace(hour=0, minute=0, second=0),
+                start=start_datetime.replace(hour=3, minute=0, second=0),
                 end=end_datetime.replace(hour=23, minute=59, second=59), 
                 event=True
             )
@@ -397,16 +410,20 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
                         event.delete()
                         continue
                 # Compare the fully generated title with the existing event's summary
-                if (event_summary.strip() == full_title.replace("\n", " ").replace("\r", "").strip() and
+                # print(f"[DEBUG] Vergleiche Kalender: '{event_summary}' am '{event_start}' bis {event_end}  mit Excel: '{full_title}' am '{start_datetime}' bis '{end_datetime}'.")
+                if (event_summary.replace("\n", " ").replace("\r", "").strip() == full_title.replace("\n", " ").replace("\r", "").strip() and
                         event_start == start_datetime and
                         event_end == end_datetime):
+                    # print(f"[DEBUG] Event '{full_title}' am {start_datetime.strftime('%d.%m.%Y')} bereits vorhanden.")
                     event_exists = True
                     # print(f"[DEBUG] Event '{full_title}' already exists. Skipping creation.")
                     break
-                # print(f"[DEBUG] Excel: '{full_title.strip()}' am '{start_datetime.date()}'. "
-                #       f"Kalender: '{event_summary}' am '{event_start.date()}'.")
+                # print(f"[DEBUG] Excel: '{full_title.strip()}' am '{start_datetime.date()}'. "f"Kalender: '{event_summary}' am '{event_start.date()}'.")
                 if event_start.date() == start_datetime.date():
-                    print(f"[DEBUG] {start_datetime.strftime('%d.%m.%Y')}, '{event_summary}' wird gelöscht.")
+                    if isinstance(event_start, datetime.datetime) and isinstance(event_end, datetime.datetime):
+                        print(f"[DEBUG] {start_datetime.strftime('%d.%m.%Y')}, {event_start.strftime('%H:%M')} bis {event_end.strftime('%H:%M')} '{event_summary}' wird gelöscht, weil ungleich '{full_title}'.")
+                    else:
+                        print(f"[DEBUG] {start_datetime.strftime('%d.%m.%Y')}, '{event_summary}' wird gelöscht.")
                     event.delete()
 
             # If the event does not exist, create it with all the information collected
