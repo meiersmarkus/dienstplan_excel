@@ -11,6 +11,15 @@ from datetime import datetime, timedelta
 import json
 import holidays
 from dateutil.easter import easter
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl.reader.drawings")
+
+if sys.platform.startswith('win'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass # Ältere Python-Versionen ignorieren
 
 # Basisverzeichnis des Skripts
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -101,9 +110,9 @@ for year in years:
 #    print(f"{holiday_date.strftime('%d.%m.%Y')}: {holiday_name}")
 
 feiertag, holiday_name = is_holiday_or_weekend(datetime.today())
-if feiertag and time.localtime().tm_hour > 8:
-    logger.info(f"[INFO] {datetime.today().strftime('%d.%m.%Y')} ist {holiday_name}. Skript wird nicht ausgeführt.")
-    sys.exit(0)
+#if feiertag and time.localtime().tm_hour > 8:
+    #logger.info(f"[INFO] {datetime.today().strftime('%d.%m.%Y')} ist {holiday_name}. Skript wird nicht ausgeführt.")
+    #sys.exit(0)
 
 def run_download_script():
     """Führt das Download-Skript aus und gibt den Rückgabewert zurück."""
@@ -164,7 +173,7 @@ def update_calendar(name, args):
 def load_colleagues_from_config(config_path):
     """Lädt die Kollegen aus einer Konfigurationsdatei."""
     try:
-        with open(config_path, 'r') as config_file:
+        with open(config_path, 'r', encoding='utf-8') as config_file:
             config = json.load(config_file)
             return config.get("colleagues", [])
     except Exception as e:
@@ -178,7 +187,7 @@ def update_calendars():
     colleagues = load_colleagues_from_config(config_path)
     
     cpu_count = os.cpu_count() or 1
-    workers = max(1, math.floor(cpu_count * 0.5))
+    workers = max(1, math.floor(cpu_count * 0.75))
     logger.info(f"Gefundene CPUs: {cpu_count}, benutze {workers} Executor-Threads")
 
     with ThreadPoolExecutor(max_workers=workers) as executor:

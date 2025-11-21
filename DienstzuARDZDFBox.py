@@ -3,7 +3,7 @@ import time
 import os
 import argparse
 import json
-import pandas as pd
+from openpyxl import load_workbook
 import datetime
 import locale
 import re
@@ -19,6 +19,103 @@ from email.mime.multipart import MIMEMultipart
 from dateutil.easter import easter
 from itertools import chain
 import logging
+import urllib.parse
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl.reader.drawings")
+
+if sys.platform.startswith('win'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass # Ältere Python-Versionen ignorieren
+
+class CalendarCache:
+    def __init__(self, client, calendar_obj):
+        self.client = client
+        self.calendar = calendar_obj
+        self.events_by_date = {}  # Key: datetime.date, Value: List of events
+        self.all_events_flat = [] # Flache Liste für schnelle Iteration
+
+    def load_all_events(self, start_date, end_date):
+        # print(f"[INFO] Lade Kalenderdaten vom {start_date.strftime('%d.%m.%Y')} bis {end_date.strftime('%d.%m.%Y')}...")
+        try:
+            # expand=False ist wichtig für Performance!
+            events = self.calendar.search(start=start_date, end=end_date, event=True, expand=False)
+            
+            self.events_by_date = {}
+            self.all_events_flat = []
+            
+            for event in events:
+                self._add_to_local_cache(event)
+                
+            # print(f"[INFO] {len(self.all_events_flat)} Termine im Speicher.")
+        except Exception as e:
+            print(f"[ERROR] Fehler beim Laden des Kalender-Caches: {e}")
+
+    def _add_to_local_cache(self, event):
+        """Hilfsfunktion: Fügt ein Event-Objekt in die internen Strukturen ein."""
+        try:
+            if not hasattr(event, 'vobject_instance') or event.vobject_instance is None:
+                if not event.data:
+                    return            
+            start = event.vobject_instance.vevent.dtstart.value
+            if isinstance(start, datetime.datetime):
+                date_key = start.date()
+            else:
+                date_key = start
+            
+            if date_key not in self.events_by_date:
+                self.events_by_date[date_key] = []
+
+            self.events_by_date[date_key].append(event)
+            self.all_events_flat.append(event)
+        except Exception as e:
+            # Abfangen von korrupten Events
+            print(f"[DEBUG] Cache Fehler bei Event: {e}")
+            pass
+
+    def get_events_on_date(self, check_date):
+        """Gibt eine Liste von Events für ein bestimmtes Datum zurück."""
+        if isinstance(check_date, datetime.datetime):
+            check_date = check_date.date()
+        return self.events_by_date.get(check_date, [])
+
+    def add_event(self, ical_data):
+        """Fügt Event zum Server UND zum lokalen Cache hinzu."""
+        try:
+            new_event = self.calendar.add_event(ical_data)
+            self._add_to_local_cache(new_event)
+            return new_event
+        except Exception as e:
+            print(f"[ERROR] Fehler beim Hinzufügen zum Kalender: {e}")
+            return None
+
+    def delete_event(self, event):
+        """Löscht Event vom Server UND aus dem lokalen Cache."""
+        try:
+            # 1. Aus Cache entfernen (bevor wir es auf dem Server löschen und Daten verlieren)
+            try:
+                start = event.vobject_instance.vevent.dtstart.value
+                if isinstance(start, datetime.datetime):
+                    date_key = start.date()
+                else:
+                    date_key = start
+                
+                if date_key in self.events_by_date:
+                    if event in self.events_by_date[date_key]:
+                        self.events_by_date[date_key].remove(event)
+            except:
+                pass # Falls Zugriff auf vobject fehlschlägt
+
+            if event in self.all_events_flat:
+                self.all_events_flat.remove(event)
+            event.delete()
+        except Exception as e:
+            print(f"[ERROR] Fehler beim Löschen des Events: {e}")
+
+# Globale Variable
+cal_cache = None
 
 # Initialisiere Timer
 timers = {}
@@ -37,13 +134,24 @@ def end_timer(timer_name, task_description):
     if timer_name in timers:
         end_time = time.time()
         elapsed_time = end_time - timers[timer_name]
-        # if timer_name == "gesamt":
-        #    print(f"[TIME] {task_description}: {elapsed_time:.2f} Sekunden", end="")
         if not (timer_name in ("caldav", "initial", "gesamt") and elapsed_time <= 20):
             print(f"[TIME] {task_description}: {elapsed_time:.2f} Sekunden")
         del timers[timer_name]  # Timer entfernen, wenn er fertig ist
     else:
         print(f"[ERROR] Kein aktiver Timer mit dem Namen: {timer_name}")
+
+def encode_calendar_url(calendar_name):
+    return urllib.parse.quote(calendar_name)
+
+def replace_german_umlauts(text):
+    """Ersetzt deutsche Umlaute und Sonderzeichen für URLs."""
+    replacements = {
+        'ä': '', 'ö': '', 'ü': '', 'ß': '',
+        'Ä': '', 'Ö': '', 'Ü': ''
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+    return text
 
 
 def is_holiday_or_weekend(datum):
@@ -105,39 +213,57 @@ def parse_html_for_workplace_info(html_file_path):  # Function to parse HTML and
     return laufzettel_werktags, laufzettel_we
 
 
-def count_night_shifts(client, calendar, search_start):
-    # Sicherstellen, dass das Datum ein datetime-Objekt ist
-    if isinstance(search_start, str):
-        search_start = pd.to_datetime(search_start)
+def to_python_datetime(value):
+    """Ersetzt pd.to_datetime für Einzelwerte."""
+    if value is None:
+        return None
+    if isinstance(value, (datetime.datetime, datetime.date)):
+        # Wenn es schon ein Datum ist (Excel liefert das oft direkt)
+        if isinstance(value, datetime.date) and not isinstance(value, datetime.datetime):
+            return datetime.datetime.combine(value, datetime.time.min)
+        return value
+    if isinstance(value, str):
+        # Versuche gängige Formate
+        for fmt in ('%Y-%m-%d', '%d.%m.%Y', '%Y%m%d'):
+            try:
+                return datetime.datetime.strptime(value, fmt)
+            except ValueError:
+                continue
+    raise ValueError(f"Konnte Datum nicht parsen: {value}")
 
-    # Suchzeitraum: Jahresbeginn bis zum aktuellen Tag
-    year = search_start.year
-    startoftheyear = datetime.datetime(year, 1, 1, 11, 0)
-    dateofentry = search_start.replace(hour=12, minute=0, second=0)
 
-    try:
-        # Events im Zeitraum abrufen
-        events = calendar.search(start=startoftheyear, end=dateofentry, event=True)
-    except Exception as e:
-        print(f"[ERROR] Fehler beim Abrufen der Events: {e}")
-        return 0
+def count_night_shifts(search_until_date):
+    # search_until_date: Bis zu diesem Datum zählen (exklusive oder inklusive, je nach Logik)
+    # Wir iterieren über die flache Liste im Cache
+    
+    if isinstance(search_until_date, str):
+        search_until_date = to_python_datetime(search_until_date)
+    
+    # Sicherstellen, dass wir nur bis zum Tag vor dem aktuellen Eintrag schauen 
+    # (oder inklusive, je nachdem wie deine alte Logik war. Hier: bis Mittag des Tages)
+    limit_date = search_until_date.date()
+    current_year = limit_date.year
 
-    # Zählen aller Events mit Startzeit nach 20:00 Uhr
-    night_shift_count = 0
-    for i, event in enumerate(events):
+    count = 0
+    for event in cal_cache.all_events_flat:
         try:
-            start_time = event.vobject_instance.vevent.dtstart.value
-            if isinstance(start_time, datetime.datetime):
-                start_time = start_time.time()
-            elif isinstance(start_time, datetime.date):
-                start_time = datetime.time(0, 0)  # Falls nur Datum ohne Zeit angegeben wurde
+            start = event.vobject_instance.vevent.dtstart.value
+            if isinstance(start, datetime.datetime):
+                s_date = start.date()
+                s_time = start.time()
+            else:
+                s_date = start
+                s_time = datetime.time(0, 0)
 
-            # Prüfen, ob die Startzeit nach 20:00 Uhr liegt
-            if start_time >= datetime.time(20, 0):
-                night_shift_count += 1
-        except Exception as e:
-            print(f"[ERROR] Fehler beim Verarbeiten von Event {i + 1}: {e}")
-    return night_shift_count
+            # Filter: Gleiches Jahr UND Datum <= aktuelles Datum
+            if s_date.year == current_year and s_date < limit_date:
+                # Nachtschicht Logik (> 20:00 Uhr)
+                if s_time >= datetime.time(20, 0):
+                    count += 1
+        except:
+            continue
+            
+    return count
 
 
 def create_ical_event(
@@ -159,7 +285,7 @@ def create_ical_event(
         if all_day:
             # For all-day events, only include the date, without time and timezone
             start_str = start_datetime.strftime('%Y%m%d')
-            end_str = (start_datetime + pd.Timedelta(days=1)).strftime('%Y%m%d')
+            end_str = (start_datetime + datetime.timedelta(days=1)).strftime('%Y%m%d')
             dtstart_str = f"DTSTART;VALUE=DATE:{start_str}"
             dtend_str = f"DTEND;VALUE=DATE:{end_str}"
         else:
@@ -235,15 +361,14 @@ END:VCALENDAR
 
 def process_all_day_event(service_entry, start_date):  # Funktion zur Verarbeitung eines ganztägigen Events
     title = service_entry.strip() or "Ganztägiger Termin"
-    start_datetime = pd.to_datetime(start_date)
+    start_datetime = to_python_datetime(start_date)
 
     try:
         # Suche nach vorhandenen ganztägigen Terminen
-        existing_events = calendar.search(start=start_datetime, end=start_datetime + pd.Timedelta(days=1), event=True)
+        existing_events = cal_cache.get_events_on_date(start_datetime.date())
         event_exists = False
 
-        for event in existing_events:
-            event.load()
+        for event in existing_events[:]:
             event_summary = event.vobject_instance.vevent.summary.value
             event_start = event.vobject_instance.vevent.dtstart.value
             event_end = (event.vobject_instance.vevent.dtend.value
@@ -252,11 +377,11 @@ def process_all_day_event(service_entry, start_date):  # Funktion zur Verarbeitu
 
             if any(term in event_summary for term in ['FT']) and user_name == load_credentials("user2", config_path):
                 print(f"[DEBUG] Lösche {event_summary} vom {event_start}, da FT nicht eingetragen werden sollen.")
-                event.delete()
+                cal_cache.delete_event(event)
                 continue
             if any(term in event_summary for term in ['FT', 'UR', 'NV', 'KD', 'KR']) and dienste:
                 print(f"[DEBUG] Lösche {event_summary} vom {event_start}, da nur Dienste eingetragen werden sollen.")
-                event.delete()
+                cal_cache.delete_event(event)
                 continue
 
             # Prüfen, ob event_start eine Uhrzeit enthält
@@ -264,7 +389,7 @@ def process_all_day_event(service_entry, start_date):  # Funktion zur Verarbeitu
                 event_start = event_start.date()  # Nur das Datum extrahieren
 
             if rewrite and event_start == start_datetime.date():
-                event.delete()
+                cal_cache.delete_event(event)
                 continue
             elif event_summary == title.replace("\n", " ").replace("\r", "").strip() and event_start == start_datetime.date():
                 event_exists = True
@@ -274,13 +399,13 @@ def process_all_day_event(service_entry, start_date):  # Funktion zur Verarbeitu
                     print(f"[DEBUG] {start_datetime.strftime('%d.%m.%Y')}, {event_start.strftime('%H:%M')} bis {event_end.strftime('%H:%M')} '{event_summary}' wird gelöscht.")
                 else:
                     print(f"[DEBUG] {start_datetime.strftime('%d.%m.%Y')}, '{event_summary}' wird gelöscht.")
-                event.delete()
+                cal_cache.delete_event(event)
 
         # Event erstellen, wenn kein passender Termin vorhanden ist
         if not event_exists:
             ical_data = create_ical_event(title, start_datetime, all_day=True)
             if ical_data:
-                calendar.add_event(ical_data)
+                cal_cache.add_event(ical_data)
                 print(f"[Dienst] {start_datetime.strftime('%d.%m.%Y')}: {title}")
 
     except Exception as e:
@@ -358,7 +483,7 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
                 # Prüfen, ob die Nachtschichtzählung neu gestartet werden soll
                 if not countnightshifts or start_date.month in [1, 2, 3, 4]:
                     # print(f"[DEBUG] Starte neue Zählung: Monat={start_date.month}, Datum={start_date}")
-                    night_shifts_count = count_night_shifts(client, calendar, start_date)
+                    night_shifts_count = count_night_shifts(start_date)
                     night_shifts_count += 1  # Erhöhe die Anzahl um 1 für den aktuellen Dienst
                     countnightshifts = True  # Markiere, dass die Zählung gestartet wurde
                 else:
@@ -370,15 +495,11 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
             # print(f"[DEBUG] Excel: '{full_title.strip()}' am '{start_datetime.date()}' von '{start_datetime.time()}' bis '{end_datetime.time()}' Uhr.")
             # print(f"[DEBUG] Prüfe '{full_title.strip()}' am '{start_datetime.date()}' mit Laufzetteldatei vom '{current_laufzettel.strftime('%d.%m.%Y')}'")  
             # Now check if the event with the full title already exists
-            existing_events = calendar.search(
-                start=start_datetime.replace(hour=3, minute=0, second=0),
-                end=end_datetime.replace(hour=23, minute=59, second=59), 
-                event=True
-            )
+            existing_events = cal_cache.get_events_on_date(start_datetime.date())
+
             event_exists = False
 
-            for event in existing_events:
-                event.load()
+            for event in existing_events[:]:
                 event_summary = event.vobject_instance.vevent.summary.value
                 event_start = event.vobject_instance.vevent.dtstart.value
                 event_end = (event.vobject_instance.vevent.dtend.value
@@ -388,11 +509,11 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
 
                 if any(term in event_summary for term in ['FT']) and user_name == load_credentials("user2", config_path):
                     print(f"[DEBUG] Lösche {event_summary} vom {event_start}, da FT nicht eingetragen werden sollen.")
-                    event.delete()
+                    cal_cache.delete_event(event)
                     continue
                 if any(term in event_summary for term in ['FT', 'UR', 'NV', 'KD', 'KR']) and dienste:
                     print(f"[DEBUG] Lösche {event_summary} vom {event_start}, da nur Dienste eingetragen werden sollen.")
-                    event.delete()
+                    cal_cache.delete_event(event)
                     continue
 
                 # Ensure event_start and event_end are datetime objects, and localize if necessary
@@ -407,7 +528,7 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
 
                 if rewrite:
                     if event_start.date() == start_datetime.date():
-                        event.delete()
+                        cal_cache.delete_event(event)
                         continue
                 # Compare the fully generated title with the existing event's summary
                 # print(f"[DEBUG] Vergleiche Kalender: '{event_summary}' am '{event_start}' bis {event_end}  mit Excel: '{full_title}' am '{start_datetime}' bis '{end_datetime}'.")
@@ -451,7 +572,7 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
                     full_title, start_datetime, end_datetime, description=description
                 )
                 if ical_data:
-                    calendar.add_event(ical_data)
+                    cal_cache.add_event(ical_data)
                     print(f"[Dienst] {start_datetime.strftime('%d.%m.%Y')}, "
                           f"{start_datetime.strftime('%H:%M')} bis {end_datetime.strftime('%H:%M')}: {full_title}")
         except Exception as e:
@@ -459,144 +580,189 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
 
 
 def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we, countnightshifts):
-    global nextlaufzettel, current_laufzettel  # Zugriff auf die globalen Variablen
-    df = pd.read_excel(file_path, header=None, engine='openpyxl')
-    # print(f"[DEBUG] Verfügbare Namen: {df[0].unique()}")
-    identifier_row = df[df[0].str.contains("I", na=False)].iloc[0]
-    # Versuch, den Namen flexibler zu finden
-    user_name_cleaned = re.sub(r',\s*[A-Z]\.?$', '', user_name).strip()  # Entfernt ", V." oder ähnliche Initialen
-    try:
-        user_row = df[
-            df[0].str.strip().str.casefold().str.replace(
-                r'\s*[\r\n]*\(.*\)\s*[\r\n]*', '', regex=True
-            ) == user_name.strip().casefold()
-        ].iloc[0]
-    except IndexError:
+    global nextlaufzettel, current_laufzettel
+    wb = load_workbook(file_path, data_only=True)
+    ws = wb.active # Nimmt das erste/aktive Blatt
+    rows = list(ws.iter_rows(values_only=True))
+
+    identifier_row = None
+    user_row = None
+
+    def clean_excel_name(n):
+        """Bereinigt den Namen in der Excel-Tabelle."""
+        if not n: return ""
         try:
-            # 2. Fallback: Suche nur nach Nachnamen (z.B. "Nachname")
-            user_row = df[
-                df[0].str.strip().str.casefold().str.replace(
-                    r'\s*[\r\n]*\(.*\)\s*[\r\n]*', '', regex=True
-                ) == user_name_cleaned.casefold()
-            ].iloc[0]
-        except IndexError:
-            if not dienste:
-                print(f"[ERROR] Benutzer '{user_name}' oder '{user_name_cleaned}' nicht gefunden!")
-            # Alle Termine für die entsprechenden Daten löschen
-            for day in range(1, 8):  # Spalten B bis H (1 bis 7)
-                try:
-                    date = identifier_row[day]
-                    start_datetime = pd.to_datetime(date)
+            if isinstance(n, bytes):
+                n = n.decode('utf-8', errors='ignore')
+            n = str(n)
+        except Exception:
+            return ""
+            
+        # Entferne Inhalte in Klammern (z.B. "(TV)", "(fester Freier)")
+        n = re.sub(r'\s*\(.*\)', '', n)
+        # Ersetze geschützte Leerzeichen (\xa0), Zero-Width Spaces (\u200b) und BOM
+        n = n.replace('\u00A0', ' ').replace('\u200b', '').replace('\ufeff', '')
+        # Reduziere mehrere Leerzeichen auf eines und trimme
+        n = re.sub(r'\s+', ' ', n)
+        return n.strip().lower()
 
-                    # Prüfe Laufzettelwechsel
-                    # print(f"[DEBUG] Prüfe Laufzettelwechsel für {start_datetime.date()} und {nextlaufzettel.date()}")
-                    if nextlaufzettel and isinstance(nextlaufzettel, datetime.datetime) and start_datetime.date() >= nextlaufzettel.date():
-                        if current_laufzettel:
-                            old_html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
-                                                            'Laufzettel_' + current_laufzettel.strftime('%Y%m%d') + '.html')
-                            if old_html_file_path in laufzettel_cache:
-                                del laufzettel_cache[old_html_file_path]
-                        # print(f"[INFO] Wechsel zu Laufzettel ab {nextlaufzettel.strftime('%d.%m.%Y')}")
-                        html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
-                                                    'Laufzettel_' + nextlaufzettel.strftime('%Y%m%d') + '.html')
-                        laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info_with_cache(html_file_path)
-                        # print(f"[DEBUG] Cache für {html_file_path}: {laufzettel_cache[html_file_path]}")
-                        current_laufzettel = nextlaufzettel
-                        getnextlaufzettel()
+    user_name_cleaned = re.sub(r',\s*[A-Z]\.?$', '', user_name).strip()
+    target_full = clean_excel_name(user_name)
+    target_short = clean_excel_name(user_name_cleaned)
+    # print(f"[DEBUG] {user_name}, {target_full}, {target_short}")
 
-                    existing_events = calendar.search(start=start_datetime, end=start_datetime + pd.Timedelta(days=1), event=True)
-                    # print(f"[DEBUG] Prüfe {start_datetime.strftime('%d.%m.%Y')} auf Termine.")
-                    for event in existing_events:
-                        event.load()
-                        event_summary = event.vobject_instance.vevent.summary.value
-                        event_start = event.vobject_instance.vevent.dtstart.value
-                        # Ensure event_start and event_end are datetime objects, and localize if necessary
-                        if event_start.date() == start_datetime.date():
-                            print(f"[DEBUG] Lösche {event_summary} vom {event_start.strftime('%d.%m.%Y')}, "
-                                  "da Nutzer nicht gefunden wurde.")
-                            event.delete()
-                except Exception as e:
-                    print(f"[ERROR] Fehler beim Löschen der Termine für {date}: {e}")
-            return nextlaufzettel, current_laufzettel
+    # 1. Finde die Zeile mit den Datumswerten (enthält "I" in Spalte A/Index 0)
+    for row in rows:
+        # Wir suchen nach dem römischen I oder ähnlichen Markern in der ersten Spalte
+        if row[0] and isinstance(row[0], str) and "I" in row[0]:
+            identifier_row = row
+            break
+            
+    if identifier_row is None:
+        print(f"[ERROR] Konnte Identifikationszeile (Datumszeile) in {os.path.basename(file_path)} nicht finden.")
+        return nextlaufzettel, current_laufzettel
 
-    # print(f"[DEBUG] '{user_name}'")
-    # Prüfe, ob Termine im Januar des aktuellen Jahres eingetragen sind
-    nonightshifts = True
-    year = identifier_row[1].year
+    for row in rows:
+        cell_val = row[0]
+        if cell_val:
+            row_name_clean = clean_excel_name(cell_val)
+            
+            if not row_name_clean: 
+                continue
+
+            # A) Exakter Match (bereinigt)
+            if row_name_clean == target_full:
+                user_row = row
+                # print(f"[DEBUG] User in Excel gefunden: {cell_val}")
+                break
+            
+            if row_name_clean == target_short:
+                user_row = row
+                print(f"[DEBUG] Kurzer User in Excel gefunden: {cell_val}")
+                break
+
+    # 3. Wenn User NICHT gefunden wurde -> Lösche Logik (Urlaub/Krank/Nicht eingeteilt)
+    if user_row is None:
+        if not dienste:
+            print(f"[WARNING] Benutzer '{user_name}' (Clean: '{target_full}') in Datei '{os.path.basename(file_path)}' nicht gefunden.")
+            print(f"[DEBUG] Skript geht davon aus, dass in dieser Woche keine Dienste stattfinden -> Lösche vorhandene Termine.")
+        
+        # Spalten B bis H entsprechen Index 1 bis 7 in der Row-Liste
+        for day_idx in range(1, 8):
+            try:
+                date_val = identifier_row[day_idx]
+                if date_val is None: continue
+                
+                start_datetime = to_python_datetime(date_val)
+
+                # Prüfe Laufzettelwechsel auch hier, um korrekten Kontext zu haben
+                if nextlaufzettel and isinstance(nextlaufzettel, datetime.datetime) and start_datetime.date() >= nextlaufzettel.date():
+                   if current_laufzettel:
+                        old_html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
+                                                        'Laufzettel_' + current_laufzettel.strftime('%Y%m%d') + '.html')
+                        if old_html_file_path in laufzettel_cache:
+                            del laufzettel_cache[old_html_file_path]
+                   html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
+                                                'Laufzettel_' + nextlaufzettel.strftime('%Y%m%d') + '.html')
+                   laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info_with_cache(html_file_path)
+                   current_laufzettel = nextlaufzettel
+                   getnextlaufzettel()
+
+                # Suche nach existierenden Terminen an diesem Tag um sie zu löschen
+                existing_events = cal_cache.get_events_on_date(start_datetime.date())
+                
+                for event in existing_events[:]: # Kopie der Liste iterieren
+                    event_summary = event.vobject_instance.vevent.summary.value
+                    event_start = event.vobject_instance.vevent.dtstart.value
+                    
+                    if isinstance(event_start, datetime.datetime):
+                        event_start_date = event_start.date()
+                    else:
+                        event_start_date = event_start
+                        
+                    if event_start_date == start_datetime.date():
+                        print(f"[DEBUG] Lösche '{event_summary}' vom {event_start_date.strftime('%d.%m.%Y')}, da Nutzer nicht in Excel gefunden.")
+                        cal_cache.delete_event(event)
+            except Exception as e:
+                print(f"[ERROR] Fehler beim Löschen der Termine: {e}")
+        return nextlaufzettel, current_laufzettel
+
+    # 4. User gefunden -> Verarbeite Zeile
+    first_date = to_python_datetime(identifier_row[1]) 
+    year = first_date.year
     start_of_january = datetime.datetime(year, 1, 1, 0, 0, tzinfo=tz_berlin)
     end_of_march = datetime.datetime(year, 3, 31, 23, 59, tzinfo=tz_berlin)
 
+    # Check für Nachtschichten-Reset (Januar Logik)
     try:
-        termine = calendar.search(start=start_of_january, end=end_of_march, event=True)
+        # Kurze Prüfung, ob schon Termine im Januar existieren (um Zähler zu resetten oder nicht)
+        # Das ist eine Näherung.
+        termine = [] 
+        # Wir nutzen hier den Cache nicht effizient für eine Jahresabfrage, 
+        # aber da es nur um das Vorhandensein geht, ist es ok.
+        # Alternativ: Prüfen ob events_by_date Einträge im Januar hat.
+        for d, evts in cal_cache.events_by_date.items():
+            if d.year == year and d.month <= 3:
+                 termine.extend(evts)
+        
         if len(termine) == 0:
             nonightshifts = True
         else:
             nonightshifts = False
-            # print(f"[DEBUG] {user_name} hat bereits Termine im Januar {year} eingetragen.")
     except Exception as e:
-        print(f"[ERROR] Fehler beim Durchsuchen des Kalenders: {e}")
+        print(f"[ERROR] Fehler beim Nachtschicht-Check: {e}")
         nonightshifts = True
 
     latest_date = None
-    for day in range(1, 8):  # Spalten B bis H (1 bis 7)
-        date = identifier_row[day]
-        service_entry = user_row[day]
-        start_date = pd.to_datetime(date)
-        # cleaned_service_entry = service_entry.replace('\n', ' ').replace('\r', ' ').strip()
-        # print(f"[DEBUG] {start_date.strftime('%a, %d.%m.%Y')}: {cleaned_service_entry}")
+    
+    # Iteriere über Spalten Index 1 bis 7 (Montag bis Sonntag)
+    for day_idx in range(1, 8):
+        date_val = identifier_row[day_idx]
+        service_entry = user_row[day_idx]
+        
+        if date_val is None:
+            continue
+            
+        start_date = to_python_datetime(date_val)
+        
         if latest_date is None or start_date.date() > latest_date:
             latest_date = start_date.date()
-            # print(f"[DEBUG] Latest_date: {latest_date.strftime('%d.%m.%Y')}")
-
-            # Prüfe Laufzettelwechsel basierend auf latest_date
+            # Laufzettelwechsel Check
             if nextlaufzettel and latest_date >= nextlaufzettel.date():
-                # print(f"[DEBUG] Prüfe Laufzettelwechsel für {latest_date} und {nextlaufzettel.date()}")
                 if current_laufzettel:
-                    old_html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
-                                                    'Laufzettel_' + current_laufzettel.strftime('%Y%m%d') + '.html')
-                    if old_html_file_path in laufzettel_cache:
-                        del laufzettel_cache[old_html_file_path]
-                # print(f"[INFO] Wechsel zu Laufzettel ab {nextlaufzettel.strftime('%d.%m.%Y')}")
+                     old_html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
+                                                     'Laufzettel_' + current_laufzettel.strftime('%Y%m%d') + '.html')
+                     if old_html_file_path in laufzettel_cache:
+                         del laufzettel_cache[old_html_file_path]
                 html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
                                             'Laufzettel_' + nextlaufzettel.strftime('%Y%m%d') + '.html')
                 laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info_with_cache(html_file_path)
                 current_laufzettel = nextlaufzettel
                 getnextlaufzettel()
 
-        # Überprüfung, ob die Zelle leer oder NaN ist
-        if pd.isna(service_entry) or not isinstance(service_entry, str):
+        # Eintrag bereinigen
+        if service_entry is None: 
             service_entry = "FT"
-        else:
-            service_entry = service_entry.replace('\n', ' ') \
-                                         .replace('\r', ' ') \
-                                         .replace('    ', ' ') \
-                                         .replace('   ', ' ') \
-                                         .replace('  ', ' ')
-            service_entry = re.sub(
-                r'(\b\d{2})\.(\d{2}\b)',
-                r'\1:\2',
-                service_entry
-            )  # Ersetze Punkte im Zeitformat "HH.MM" durch Doppelpunkte "HH:MM"
-            service_entry = re.sub(
-                r'(\b\d{2}:\d{2})\s*-\s*(\d{2}:\d{2}\b)',
-                r'\1 - \2',
-                service_entry
-            )  # Vereinheitliche das Zeitformat auf "HH:MM - HH:MM" (mit oder ohne Leerzeichen um den Bindestrich)
-        # print(f"[INFO] {identifier_row[day].strftime('%a, %d.%m.%Y')}, {service_entry}")
+        elif isinstance(service_entry, float):
+             service_entry = "FT" # Fangt NaNs ab
+        elif not isinstance(service_entry, str):
+            service_entry = "FT"
 
-        # Prüfe ob nextlaufzettel None ist
-        # print(f"[DEBUG] Nächster Laufzettel: {nextlaufzettel}")
+        service_entry = service_entry.replace('\n', ' ').replace('\r', ' ')
+        service_entry = re.sub(r'\s+', ' ', service_entry) # Doppel-Leerzeichen weg
+        # Formate wie 10.00 zu 10:00 reparieren
+        service_entry = re.sub(r'(\b\d{2})\.(\d{2}\b)', r'\1:\2', service_entry)
+        service_entry = re.sub(r'(\b\d{2}:\d{2})\s*-\s*(\d{2}:\d{2}\b)', r'\1 - \2', service_entry)
+
+        # Laufzettel Update Logik nochmal explizit für den Tag
         if nextlaufzettel is not None:
-            # Prüfe ob das aktuelle oder späteste Datum den Laufzettel-Wechsel erfordert
             if (start_date.date() >= nextlaufzettel.date()):
-                # print(f"[INFO] Wechsel zu Laufzettel ab {nextlaufzettel.strftime('%d.%m.%Y')}")
                 html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
                                             'Laufzettel_' + nextlaufzettel.strftime('%Y%m%d') + '.html')
                 laufzettel_werktags, laufzettel_we = parse_html_for_workplace_info_with_cache(html_file_path)
                 getnextlaufzettel()
-                # print(f"[DEBUG] Nächster Laufzettel wird sein: {nextlaufzettel.strftime('%d.%m.%Y')}")
-
-        # Abfrage zur Unterscheidung zwischen ganztägigen und zeitgebundenen Terminen
+        # print(f"[DEBUG] Excel event: {service_entry}, start: {start_date}")
+        # Unterscheidung: Uhrzeit (09:00 - 17:00) vs Ganztag (FT, Urlaub, etc.)
         if re.search(r'\b\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\b', service_entry):
             process_timed_event(
                 service_entry, start_date,
@@ -605,8 +771,8 @@ def process_excel_file(file_path, user_name, laufzettel_werktags, laufzettel_we,
             )
         else:
             process_all_day_event(service_entry, start_date)
-    return
-
+            
+    return nextlaufzettel, current_laufzettel
 
 def load_all_laufzettel(folder_path):
     global laufzettel_data  # Zugriff auf die globale Variable
@@ -710,8 +876,8 @@ def send_email(subject, body, to_email, kalender_id):
     abobase = load_credentials("abobase", config_path)
     night_shifts = None
     if date.today().month >= 11:
-        night_shifts_count = count_night_shifts(client, calendar, date.today())
-        night_shifts_count_year = count_night_shifts(client, calendar, datetime.datetime(date.today().year, 12, 31, 23, 59))
+        night_shifts_count = count_night_shifts(date.today())
+        night_shifts_count_year = count_night_shifts(datetime.datetime(date.today().year, 12, 31, 23, 59))
         if night_shifts_count > 0 or night_shifts_count_year > 0:
             if night_shifts_count == 1:
                 night_shifts = f"Im Jahr {date.today().year} hattest du bisher {night_shifts_count} Nachtschicht."
@@ -853,11 +1019,16 @@ else:
 caldavlogin = "caldav" + service_name
 caldav_start = load_credentials(caldavlogin, config_path)
 calendar_name = 'Dienstplan ' + user_name.replace(',', '').replace('.', '')
-caldav_url = caldav_start + 'dienstplan-' + user_name.lower().replace(' ', '-').replace(',', '').replace('.', '') + '/'
+# 2. URL Generierung (Umlaute ersetzen: ü -> ue, ß -> ss)
+# Bereinige den Namen für die URL: Kleinbuchstaben, Umlaute weg, Leerzeichen zu Strichen
+# clean_user_name = replace_german_umlauts(user_name).lower()
+clean_user_name = user_name.replace(' ', '-').replace(',', '').replace('.', '')
+clean_user_name = encode_calendar_url(clean_user_name)
+
+caldav_url = caldav_start + 'dienstplan-' + clean_user_name + '/'
 
 # print(f"[DEBUG] Kalendername: {calendar_name}")
 # print(f"[DEBUG] Kalender-URL: {caldav_url}")
-# print(f"[DEBUG] Download? {'Ja' if should_download else 'Nein'}")
 
 options = [
     "'-c'" if meiersmarkus else None,
@@ -886,32 +1057,79 @@ for year in years:
 #    print(f"{holiday_date.strftime('%d.%m.%Y')}: {holiday_name}")
 
 start_timer("caldav")
+
+# 1. Bereinige den Namen für den Vergleich (nicht für die URL!)
+target_display_name = 'Dienstplan ' + user_name.replace(',', '').replace('.', '').strip()
+target_display_name_clean = " ".join(target_display_name.split()).lower()
+
+# print(f"[DEBUG] Suche Kalender mit dem Namen: '{target_display_name}'")
+
 try:
-    # print(f"[DEBUG] Verbinde mit CalDAV-Server '{service_name}'...")
+    # Login Daten laden
     login_service = "login_" + service_name
     username, password = load_credentials(login_service, config_path)
-    # print(f"[DEBUG] Username und Passwort geladen: {username}")
+    
+    # Verbindung zum Account herstellen (nicht zu einem spezifischen Kalender!)
     client = DAVClient(caldav_start, username=username, password=password)
     principal = client.principal()
-    try:
-        calendar = principal.calendar(name=calendar_name)
-    except Exception as e:
-        print(f"[ERROR] Kalender nicht gefunden: {e}")
-        if not nas:
-            # print(f"[ERROR] Dienstplan-Kalender nicht gefunden. Versuche, einen neuen Kalender zu erstellen...")
-            # new_calendar = principal.make_calendar(calendar_name)
-            # new_calendar.save()  # Save the newly created calendar to the server
-            print(f"[DEBUG] Kalender '{calendar_name}' nicht gefunden.")
-            # calendar = new_calendar
+    
+    # Alle Kalender abrufen
+    calendars = principal.calendars()
+    
+    calendar = None
+    
+    # Suchen...
+    for cal in calendars:
+        if not cal.name: 
+            continue
+            
+        # Namen vom Server holen und bereinigen
+        server_cal_name = str(cal.name)
+        server_cal_name_clean = " ".join(server_cal_name.split()).lower()
+        
+        # Vergleich 1: Exakter Name
+        if server_cal_name_clean == target_display_name_clean:
+            calendar = cal
+            # print(f"[SUCCESS] Kalender gefunden: '{server_cal_name}' (URL: {cal.url})")
+            break
+        
+        # Vergleich 2: Fallback für "Preuß" vs "Preuss" (Encoding Toleranz)
+        # Falls Python "ß" anders sieht als der Server
+        if replace_german_umlauts(server_cal_name_clean) == replace_german_umlauts(target_display_name_clean):
+            calendar = cal
+            # print(f"[SUCCESS] Kalender (via Umlaut-Match) gefunden: '{server_cal_name}'")
+            break
 
-    # Erfolgreiche Verbindung herstellen, falls Kalender gefunden oder erstellt wurde
-    if not calendar:
-        print(f"[ERROR] Es konnte keine Verbindung zum Kalender '{calendar_name}' hergestellt werden.")
+    # Wenn immer noch nicht gefunden und wir NICHT im NAS Modus sind -> Neu anlegen
+    if not calendar and not nas:
+        print(f"[INFO] Kalender '{target_display_name}' existiert nicht.")
+        # try:
+            # calendar = principal.make_calendar(name=target_display_name)
+            # print(f"[SUCCESS] Neuer Kalender erstellt: '{target_display_name}'")
+        # except Exception as create_err:
+            # print(f"[ERROR] Konnte Kalender nicht erstellen: {create_err}")
 
 except Exception as e:
-    print(f"[ERROR] CalDAV-Verbindung fehlgeschlagen oder Fehler bei der Kalendererstellung: {e}")
+    print(f"[ERROR] Genereller Fehler bei der CalDAV-Verbindung: {e}")
+    if not nas:
+        sys.exit(1)
+
+# Letzte Prüfung
+if not calendar:
+    print(f"[ERROR] Kalender '{target_display_name}' konnte endgültig nicht gefunden werden.")
     sys.exit(1)
+
 end_timer("caldav", "Verbindung zu CalDAV")
+
+# Initialisiere Cache
+cal_cache = CalendarCache(client, calendar)
+
+# Definiere Zeitraum: 1. Januar aktuelles Jahr bis Ende nächsten Jahres (zur Sicherheit)
+cache_start = datetime.datetime(current_year, 1, 1, 0, 0)
+cache_end = datetime.datetime.now() + datetime.timedelta(days=90)
+
+# Cache einmalig füllen
+cal_cache.load_all_events(cache_start, cache_end)
 
 eingetragene_termine = []
 target_folder = os.path.join(folder_path, "Plaene", "MAZ_TAZ Dienstplan")
@@ -955,13 +1173,16 @@ if eingetragene_termine and notify:
     for term in eingetragene_termine:
         split_term = term.split(":")
         split_term = split_term[0].split(" ")
-        datum = pd.to_datetime(split_term[0], format='%d.%m.%Y')
+        try:
+            datum = datetime.datetime.strptime(split_term[0], '%d.%m.%Y')
+        except ValueError:
+            continue # Überspringen bei Formatfehler
         wochentag = deutsche_wochentage[datum.weekday()] # 0=Montag, 6=Sonntag
         # wochentag = pd.to_datetime(split_term[0], format='%d.%m.%Y').strftime('%a')[:2] + '.'
         # print(f"[INFO] {wochentag} {term}")
         # Wochentag vor jedes Datum einfügen und in die Liste eingetragene_termine_wochentag schreiben
         # Wenn das Datum in der Vergangenheit liegt, dann nicht einfügen
-        if pd.to_datetime(split_term[0], format='%d.%m.%Y').date() >= datetime.date.today():
+        if datum.date() >= datetime.date.today():
             eingetragene_termine_wochentag += [f"{wochentag} {term}"]
     # start_timer("mail")
     # Zusammenstellung der eingetragenen Termine
