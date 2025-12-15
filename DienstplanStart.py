@@ -187,7 +187,7 @@ def update_calendars():
     colleagues = load_colleagues_from_config(config_path)
     
     cpu_count = os.cpu_count() or 1
-    workers = max(1, math.floor(cpu_count * 0.75))
+    workers = max(1, math.floor(cpu_count * 0.50))
     logger.info(f"Gefundene CPUs: {cpu_count}, benutze {workers} Executor-Threads")
 
     with ThreadPoolExecutor(max_workers=workers) as executor:

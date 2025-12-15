@@ -78,6 +78,17 @@ def download_dienste(folder_path):
 
         os.remove(zip_path)
 
+        # Test-Dateien sofort löschen
+        for root, _, files in os.walk(plaene_dir):
+            for fname in files:
+                if "test" in fname.lower():
+                    path = os.path.join(root, fname)
+                    print(f"🧹 Lösche Test-Datei: {fname}")
+                    try:
+                        os.remove(path)
+                    except Exception as e:
+                        print(f"Fehler beim Löschen von {fname}: {e}")
+
         # Analyse des neuesten Änderungsdatums nach dem Download
         new_latest_date = get_latest_modification_date(plaene_dir)
 

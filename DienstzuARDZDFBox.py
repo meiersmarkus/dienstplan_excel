@@ -174,76 +174,71 @@ def parse_html_for_workplace_info_with_cache(html_file_path):
     return laufzettel_werktags, laufzettel_we
 
 
-def parse_html_for_workplace_info(html_file_path):  # Function to parse HTML and extract workplace, breaks, and tasks
-    # start_timer("html")
-    def extract_info(table):
-        # Extrahiert die Informationen aus einer HTML-Tabelle und gibt eine Liste von Einträgen zurück.
-        info = []
-        if table:
-            for row in table.find_all('tr'):
-                cols = row.find_all('td')
-                if len(cols) >= 5:
-                    info.append({
-                        'dienstname': cols[0].text.replace('\u00A0', ' ').strip(),
-                        'dienstzeit': cols[1].text.replace('\u00A0', ' ').strip(),
-                        'arbeitsplatz': cols[2].text.replace('\u00A0', ' ').strip(),
-                        'pausenzeit': cols[3].text.replace('\u00A0', ' ').strip(),
-                        'task': cols[4].text.replace('\u00A0', ' ').strip()
-                    })
-                    if len(info) > 40:
-                        break
-        for entry in info:
-            if re.search(r"[\u00A0\u200B\uFEFF]", str(entry)):
-                print("[DEBUG] Unsichtbare Zeichen gefunden:", repr(entry))
-        return info
+def parse_html_for_workplace_info(html_file_path):
+    def extract_table_data(table):
+        if not table:
+            return []
+        
+        data = []
+        rows = table.find_all('tr')
+        
+        for row in rows:
+            cols = [ele.text.replace('\u00A0', ' ').strip() for ele in row.find_all('td')]
+            if len(cols) >= 5:
+                data.append({
+                    'dienstname': cols[0],
+                    'dienstzeit': cols[1],
+                    'arbeitsplatz': cols[2],
+                    'pausenzeit': cols[3],
+                    'task': cols[4]
+                })
+                if len(data) > 40:
+                    break
+        return data
 
-    # HTML parsen
-    with open(html_file_path, 'r', encoding='utf-8') as file:
-        soup = BeautifulSoup(file, 'html.parser')
+    try:
+        with open(html_file_path, 'r', encoding='utf-8') as file:
+            soup = BeautifulSoup(file, 'html.parser')
 
-    # Werktags- und Wochenend-Bereich extrahieren
-    werktags_table = soup.find('table', summary='Laufzettel ab 01.01.23 Werktags')
-    wochenende_table = soup.find('table', summary='Laufzettel ab 01.01.23 Wochenende')
-
-    laufzettel_werktags = extract_info(werktags_table) if werktags_table else []
-    laufzettel_we = extract_info(wochenende_table) if wochenende_table else []
-
-    # Rückgabe der getrennten Listen
-    # end_timer("html", "HTML auslesen")
-    return laufzettel_werktags, laufzettel_we
-
+        werktags = extract_table_data(soup.find('table', summary='Laufzettel ab 01.01.23 Werktags'))
+        wochenende = extract_table_data(soup.find('table', summary='Laufzettel ab 01.01.23 Wochenende'))
+        
+        return werktags, wochenende
+    except Exception as e:
+        print(f"[ERROR] Fehler beim Parsen von {html_file_path}: {e}")
+        return [], []
 
 def to_python_datetime(value):
-    """Ersetzt pd.to_datetime für Einzelwerte."""
-    if value is None:
+    if not value:
         return None
-    if isinstance(value, (datetime.datetime, datetime.date)):
-        # Wenn es schon ein Datum ist (Excel liefert das oft direkt)
-        if isinstance(value, datetime.date) and not isinstance(value, datetime.datetime):
-            return datetime.datetime.combine(value, datetime.time.min)
+    
+    if isinstance(value, datetime.datetime):
         return value
+    
+    if isinstance(value, datetime.date):
+        return datetime.datetime.combine(value, datetime.time.min)
+    
     if isinstance(value, str):
-        # Versuche gängige Formate
-        for fmt in ('%Y-%m-%d', '%d.%m.%Y', '%Y%m%d'):
+        formats = ('%Y-%m-%d', '%d.%m.%Y', '%Y%m%d', '%Y-%m-%d %H:%M:%S')
+        for fmt in formats:
             try:
                 return datetime.datetime.strptime(value, fmt)
             except ValueError:
                 continue
-    raise ValueError(f"Konnte Datum nicht parsen: {value}")
+                
+    raise ValueError(f"Unbekanntes Datumsformat: {value} ({type(value)})")
 
 
 def count_night_shifts(search_until_date):
-    # search_until_date: Bis zu diesem Datum zählen (exklusive oder inklusive, je nach Logik)
-    # Wir iterieren über die flache Liste im Cache
-    
     if isinstance(search_until_date, str):
         search_until_date = to_python_datetime(search_until_date)
     
-    # Sicherstellen, dass wir nur bis zum Tag vor dem aktuellen Eintrag schauen 
-    # (oder inklusive, je nachdem wie deine alte Logik war. Hier: bis Mittag des Tages)
-    limit_date = search_until_date.date()
-    current_year = limit_date.year
+    if isinstance(search_until_date, datetime.datetime):
+        limit_date = search_until_date.date()
+    else:
+        limit_date = search_until_date
 
+    current_year = limit_date.year
     count = 0
     for event in cal_cache.all_events_flat:
         try:
@@ -255,9 +250,7 @@ def count_night_shifts(search_until_date):
                 s_date = start
                 s_time = datetime.time(0, 0)
 
-            # Filter: Gleiches Jahr UND Datum <= aktuelles Datum
             if s_date.year == current_year and s_date < limit_date:
-                # Nachtschicht Logik (> 20:00 Uhr)
                 if s_time >= datetime.time(20, 0):
                     count += 1
         except:
@@ -273,7 +266,7 @@ def create_ical_event(
     all_day=False,
     description=None
 ):
-    if any(term in title for term in ['FT']) and user_name == load_credentials("user2", config_path):
+    if any(term in title for term in ['FT']) and user_name == USER2_NAME:
         # print(f"[DEBUG] {title} übersprungen, keine FT ausgewählt wurde.")
         return
     if any(term in title for term in ['FT', 'UR', 'NV', 'KD', 'KR']) and dienste:
@@ -375,7 +368,7 @@ def process_all_day_event(service_entry, start_date):  # Funktion zur Verarbeitu
                          if hasattr(event.vobject_instance.vevent, 'dtend')
                          else None)
 
-            if any(term in event_summary for term in ['FT']) and user_name == load_credentials("user2", config_path):
+            if any(term in event_summary for term in ['FT']) and user_name == USER2_NAME:
                 print(f"[DEBUG] Lösche {event_summary} vom {event_start}, da FT nicht eingetragen werden sollen.")
                 cal_cache.delete_event(event)
                 continue
@@ -426,7 +419,7 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
         start_datetime = datetime.datetime.strptime(f"{start_date.strftime('%Y-%m-%d')} {start_time_str}", '%Y-%m-%d %H:%M')
         end_datetime = datetime.datetime.strptime(f"{start_date.strftime('%Y-%m-%d')} {end_time_str}", '%Y-%m-%d %H:%M')
 
-        if user_name == load_credentials("user1", config_path) and end_datetime.time() < datetime.time(8, 0):
+        if user_name == USER1_NAME and end_datetime.time() < datetime.time(8, 0):
             end_datetime = tz_berlin.localize(
                 datetime.datetime.combine(end_datetime.date(), datetime.time(23, 59)), is_dst=None
             )
@@ -474,7 +467,7 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
                             break
             # print(f"[DEBUG] Am {start_date.strftime('%d.%m.%Y')}: {title}, Workplace: {workplace}, Break: {break_time}, Task: {task}")
 
-            if user_name == load_credentials("user1", config_path):
+            if user_name == USER1_NAME:
                 full_title = f"{start_time_str}-{end_time_str} {title}"
             else:
                 full_title = f"{title}, {workplace}" if workplace and workplace not in title else title
@@ -507,7 +500,7 @@ def process_timed_event(service_entry, start_date, laufzettel_werktags, laufzett
                              else None)
                 # print(f"[DEBUG] {len(existing_events)} Termine gefunden.")
 
-                if any(term in event_summary for term in ['FT']) and user_name == load_credentials("user2", config_path):
+                if any(term in event_summary for term in ['FT']) and user_name == USER2_NAME:
                     print(f"[DEBUG] Lösche {event_summary} vom {event_start}, da FT nicht eingetragen werden sollen.")
                     cal_cache.delete_event(event)
                     continue
@@ -875,25 +868,34 @@ def send_email(subject, body, to_email, kalender_id):
     kalenderbase = load_credentials("kalenderbase", config_path)
     abobase = load_credentials("abobase", config_path)
     night_shifts = None
-    if date.today().month >= 11:
-        night_shifts_count = count_night_shifts(date.today())
-        night_shifts_count_year = count_night_shifts(datetime.datetime(date.today().year, 12, 31, 23, 59))
+    
+    today = date.today()
+    today_dt = datetime.datetime.combine(today, datetime.time.min)
+
+    if today.month >= 11:
+        night_shifts_count = count_night_shifts(today_dt)
+        night_shifts_count_year = count_night_shifts(datetime.datetime(today.year, 12, 31, 23, 59))
         if night_shifts_count > 0 or night_shifts_count_year > 0:
             if night_shifts_count == 1:
-                night_shifts = f"Im Jahr {date.today().year} hattest du bisher {night_shifts_count} Nachtschicht."
+                night_shifts = f"Im Jahr {today.year} hattest du bisher {night_shifts_count} Nachtschicht."
             elif night_shifts_count > 1:
-                night_shifts = f"Im Jahr {date.today().year} hattest du bisher {night_shifts_count} Nachtschichten."
+                night_shifts = f"Im Jahr {today.year} hattest du bisher {night_shifts_count} Nachtschichten."
             else:
-                night_shifts = f"Im Jahr {date.today().year} hattest du bisher keine Nachtschichten."
+                night_shifts = f"Im Jahr {today.year} hattest du bisher keine Nachtschichten."
             if night_shifts_count_year - night_shifts_count > 0:
-                if night_shifts_count_year - night_shifts_count == 1:
-                    night_shifts += f"<br>Es sind noch {night_shifts_count_year - night_shifts_count} Nachtschicht für dich disponiert.<br>"
-                elif night_shifts_count_year - night_shifts_count > 1:
-                    night_shifts += f"<br>Es sind noch {night_shifts_count_year - night_shifts_count} Nachtschichten für dich disponiert.<br>"
+                diff = night_shifts_count_year - night_shifts_count
+                if diff == 1:
+                    night_shifts += f"<br>Es sind noch {diff} Nachtschicht für dich disponiert.<br>"
+                elif diff > 1:
+                    night_shifts += f"<br>Es sind noch {diff} Nachtschichten für dich disponiert.<br>"
                 if night_shifts_count_year == 1:
-                    night_shifts += f"Das ist dann insgesamt {night_shifts_count_year} Nachtschicht für {date.today().year}."
+                    night_shifts += f"Das ist dann insgesamt {night_shifts_count_year} Nachtschicht für {today.year}."
                 else:
-                    night_shifts += f"Das wären dann insgesamt {night_shifts_count_year} Nachtschichten für {date.today().year}."
+                    night_shifts += f"Das wären dann insgesamt {night_shifts_count_year} Nachtschichten für {today.year}."
+            
+            if night_shifts:
+                print(f"[DEBUG] Jahresstatistik: {night_shifts.replace('<br>', ' ')}")
+
     kalenderurls = (
         f'<a href="{kalenderbase}{kalender_id}">Kalender</a><br>'
         f'<a href="{abobase}{kalender_id}?export">Abo-URL</a><br>Alle Angaben und Inhalte sind ohne Gewähr.'
@@ -990,6 +992,10 @@ laufzettel_data = {}
 # Globale Variablen für Laufzettel
 nextlaufzettel = None
 current_laufzettel = None
+
+# Am Anfang des Scripts (nach Imports):
+USER1_NAME = load_credentials("user1", config_path)
+USER2_NAME = load_credentials("user2", config_path)
 
 parser = argparse.ArgumentParser(description="Dienst zu ARD ZDF Box Script.")
 parser.add_argument("user_name", help="Name des Benutzers", type=str)
@@ -1147,8 +1153,8 @@ xlsx_files = [
 ]
 with_date, without_date = [], []
 for file in xlsx_files:
-    date = extract_date_from_filename(os.path.basename(file))
-    (with_date if date else without_date).append((file, date) if date else file)
+    file_date = extract_date_from_filename(os.path.basename(file))
+    (with_date if file_date else without_date).append((file, file_date) if file_date else file)
 with_date.sort(key=lambda x: x[1])
 xlsx_files = list(chain((f[0] for f in with_date), without_date))
 
