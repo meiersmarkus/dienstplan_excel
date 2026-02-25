@@ -11,3 +11,7 @@ GruppeVPAStart.py
 .DS_Store
 .DS_Store
 clean_laufzettel.py
+/secret
+.DS_Store
+/OLD
+Changelog.txt
